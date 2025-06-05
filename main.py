@@ -369,10 +369,20 @@ def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
 
 # ─── 12) FONCTION D’ENVOI DE MESSAGE SUR TELEGRAM ────────────────────────
 def send_telegram(msg: str):
+    """
+    Envoie un message Telegram en utilisant directement l'API HTTP.
+    Cela évite le warning "coroutine 'Bot.send_message' was never awaited".
+    """
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": msg
+    }
     try:
-        telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+        # Envoi synchrone via requests
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
-        print("Erreur Telegram :", e)
+        print("Erreur Telegram (HTTP) :", e)
 
 # ─── 13) BOUCLE PRINCIPALE DU BOT (TP/SL, scan Whale, résumé quotidien…) ───
 def main_loop():
