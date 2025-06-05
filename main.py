@@ -10,33 +10,27 @@ from dotenv import load_dotenv
 # ─── 1) CHARGEMENT DES VARIABLES D’ENVIRONNEMENT ─────────────────────────
 load_dotenv()
 
-PRIVATE_KEY       = os.getenv("PRIVATE_KEY")         # Clé privée (sans "0x")
-WALLET_ADDRESS    = Web3.to_checksum_address(os.getenv("WALLET_ADDRESS"))  # suppose déjà en minuscules dans .env
+PRIVATE_KEY       = os.getenv("PRIVATE_KEY")
+WALLET_ADDRESS    = Web3.to_checksum_address(os.getenv("WALLET_ADDRESS").strip().lower())
 INFURA_URL        = os.getenv("INFURA_URL")
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY")
 
-# Pour envoyer des messages Telegram via requêtes HTTP
-# (Nous n’utiliserons plus Bot.send_message() directement)
+# URL de l’API Telegram pour envoi synchrone
 telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
-# ─── DEBUG RAPIDE (pour s’assurer que tout est bien chargé) ───────────────
-print("DEBUG → PRIVATE_KEY loaded :", PRIVATE_KEY is not None)
-print("DEBUG → WALLET_ADDRESS    :", WALLET_ADDRESS)
-print("DEBUG → INFURA_URL        :", INFURA_URL and INFURA_URL.startswith("https://"))
-print("DEBUG → TELEGRAM_TOKEN    :", bool(TELEGRAM_TOKEN))
-print("DEBUG → TELEGRAM_CHAT_ID  :", TELEGRAM_CHAT_ID)
-print("DEBUG → ETHERSCAN_API_KEY :", ETHERSCAN_API_KEY is not None)
 
 # ─── 2) INITIALISATION DE WEB3 ────────────────────────────────────────────
 w3 = Web3(Web3.HTTPProvider(INFURA_URL))
 if not w3.is_connected():
     raise ConnectionError("Impossible de se connecter à Infura. Vérifie INFURA_URL.")
 
-# ─── 3) INITIALISATION DU ROUTER UNISWAP V2 ────────────────────────────────
-UNISWAP_ROUTER_ADDRESS = Web3.to_checksum_address("0x7a250d5630b4cf539739df2c5dacb4c659f2488d")
-WETH_ADDRESS           = Web3.to_checksum_address("0xc02aaa39b223fe8d0a0e5c4f27e756cc2")
+# ─── 3) ROUTER UNISWAP & WETH (tout en minuscules avant conversion) ──────
+raw_router = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d"
+UNISWAP_ROUTER_ADDRESS = Web3.to_checksum_address(raw_router.lower().strip())
+
+raw_weth = "0xc02aaa39b223fe8d0a0e5c4f27e756cc2"
+WETH_ADDRESS = Web3.to_checksum_address(raw_weth.lower().strip())
 
 UNISWAP_ROUTER_ABI = [
     {
@@ -68,13 +62,12 @@ UNISWAP_ROUTER_ABI = [
 
 router_contract = w3.eth.contract(address=UNISWAP_ROUTER_ADDRESS, abi=UNISWAP_ROUTER_ABI)
 
-# ─── 4) LISTE DES WHALES À SURVEILLER ────────────────────────────────────
-WHALES = [
+# ─── 4) LISTE DES WHALES À SURVEILLER (en minuscules puis to_checksum) ────
+WHALES_RAW = [
     "0x4d2468bef1e33e17f7b017430ded6f7c169f7054",
     "0xdbf5e9c5206d0db70a90108bf936da60221dc080"
 ]
-# Convertir en checksum au démarrage
-WHALES = [Web3.to_checksum_address(w.lower()) for w in WHALES]
+WHALES = [Web3.to_checksum_address(w.strip().lower()) for w in WHALES_RAW]
 last_processed_block = {whale: 0 for whale in WHALES}
 
 # ─── 5) PARAMÉTRAGE DU BUDGET ET CONVERSION EUR → ETH ────────────────────
@@ -97,8 +90,13 @@ print(f"→ {MAX_TRADES_PER_MONTH} trades/mois → {ETH_PER_TRADE} ETH par trade
 TP_THRESHOLD = Decimal('0.30')   # Take-profit à +30 %
 SL_THRESHOLD = Decimal('0.15')   # Stop-loss à −15 %
 
-# Liste globale pour stocker les positions ouvertes
-# Chaque position = { "token": str, "token_amount_wei": int, "entry_eth": Decimal, "entry_ratio": Decimal }
+# Positions ouvertes (globale)
+# Chaque position = {
+#   "token": str (hex address),
+#   "token_amount_wei": int,
+#   "entry_eth": Decimal,
+#   "entry_ratio": Decimal
+# }
 positions: list[dict] = []
 
 # ─── 7) UTILITAIRES POUR PARSER L’INPUT HEX UNISWAP ───────────────────────
@@ -109,6 +107,10 @@ def est_uniswap_swap_exact_tokens_for_eth(input_hex: str) -> bool:
     return input_hex.startswith("0x18cbafe5")
 
 def extract_token_from_swap_eth_for_tokens(input_hex: str) -> str:
+    """
+    Extrait l’adresse du token de l’input hex d’un swapExactETHForTokens.
+    On force le token_hex en minuscules avant to_checksum_address.
+    """
     full        = input_hex[2:]
     path_offset = 8 + 64 + 64
     token_start = 2 + path_offset + 64 + 24
@@ -117,6 +119,10 @@ def extract_token_from_swap_eth_for_tokens(input_hex: str) -> str:
     return Web3.to_checksum_address(token_str)
 
 def extract_token_from_swap_tokens_for_eth(input_hex: str) -> str:
+    """
+    Extrait l’adresse du token de l’input hex d’un swapExactTokensForETH.
+    On force le token_hex en minuscules avant to_checksum_address.
+    """
     full        = input_hex[2:]
     path_offset = 8 + 64 + 64 + 64
     token_start = 2 + path_offset + 64 + 24
@@ -128,7 +134,7 @@ def extract_token_from_swap_tokens_for_eth(input_hex: str) -> str:
 def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
     """
     Mirror BUY : swapExactETHForTokens pour 'eth_amount' ETH,
-    puis stocke la position dans `positions` (token, quantité, prix d’entrée).
+    puis stocke la position dans `positions`.
     """
     balance_wei = w3.eth.get_balance(WALLET_ADDRESS)
     balance_eth = w3.from_wei(balance_wei, 'ether')
@@ -136,7 +142,8 @@ def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
         send_telegram(f"🚨 Solde insuffisant : {balance_eth:.6f} ETH dispo, il faut {eth_amount:.6f} ETH.")
         return None
 
-    path_buy      = [WETH_ADDRESS, Web3.to_checksum_address(token_address.lower())]
+    tkn_addr      = Web3.to_checksum_address(token_address.strip().lower())
+    path_buy      = [WETH_ADDRESS, tkn_addr]
     amount_in_wei = w3.to_wei(eth_amount, 'ether')
 
     # 1) Estimer la quantité de tokens obtenue
@@ -172,16 +179,16 @@ def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
         return None
 
     try:
-        signed_txn     = w3.eth.account.sign_transaction(txn, private_key=PRIVATE_KEY)
-        tx_hash_bytes  = w3.eth.send_raw_transaction(signed_txn.raw_transaction)
-        tx_hash        = tx_hash_bytes.hex()
+        signed_txn    = w3.eth.account.sign_transaction(txn, private_key=PRIVATE_KEY)
+        tx_hash_bytes = w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+        tx_hash       = tx_hash_bytes.hex()
     except Exception as e:
         send_telegram(f"Erreur send_raw_transaction (buy): {e}")
         return None
 
-    # 3) Stockage de la position pour TP/SL futur
+    # 3) Stocker la position
     positions.append({
-        "token": token_address,
+        "token": tkn_addr,
         "token_amount_wei": token_amount_estimate_wei,
         "entry_eth": entry_eth,
         "entry_ratio": entry_ratio
@@ -189,7 +196,7 @@ def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
 
     send_telegram(
         f"[BUY] Mirror achat whale → {eth_amount:.6f} ETH → "
-        f"{token_amount_estimate:.6f} tokens ({token_address}) | Tx: {tx_hash}"
+        f"{token_amount_estimate:.6f} tokens ({tkn_addr}) | Tx: {tx_hash}"
     )
     return tx_hash
 
@@ -219,20 +226,20 @@ def sell_all_token(token_address: str) -> str | None:
     Mirror SELL : vend toute la balance du token 'token_address'.
     1) Approve du token → 2) swapExactTokensForETH.
     """
-    tkn_addr       = Web3.to_checksum_address(token_address.lower())
+    tkn_addr       = Web3.to_checksum_address(token_address.strip().lower())
     token_contract = w3.eth.contract(address=tkn_addr, abi=ERC20_ABI)
 
     try:
         balance_token = token_contract.functions.balanceOf(WALLET_ADDRESS).call()
     except Exception as e:
-        send_telegram(f"Erreur balanceOf pour vente ({token_address}): {e}")
+        send_telegram(f"Erreur balanceOf pour vente ({tkn_addr}): {e}")
         return None
 
     if balance_token == 0:
-        send_telegram(f"⚠️ Pas de balance à vendre pour {token_address}.")
+        send_telegram(f"⚠️ Pas de balance à vendre pour {tkn_addr}.")
         return None
 
-    # 9.a) Approve du token pour le Router Uniswap
+    # 9.a) Approve du token pour Uniswap
     try:
         nonce = w3.eth.get_transaction_count(WALLET_ADDRESS)
         approve_txn = token_contract.functions.approve(
@@ -246,18 +253,15 @@ def sell_all_token(token_address: str) -> str | None:
         signed_approve = w3.eth.account.sign_transaction(approve_txn, private_key=PRIVATE_KEY)
         tx_hash_a      = w3.eth.send_raw_transaction(signed_approve.raw_transaction)
         tx_a           = tx_hash_a.hex()
-        send_telegram(f"[APPROVE] {token_address} → Router. Tx: {tx_a}")
-        time.sleep(15)  # attente pour que l’approve soit miné
+        send_telegram(f"[APPROVE] {tkn_addr} → Router. Tx: {tx_a}")
+        time.sleep(15)  # attendre que l’approve soit minée
     except Exception as e:
         send_telegram(f"Erreur Approve (sell): {e}")
         return None
 
     # 9.b) swapExactTokensForETH du solde complet
-    path_sell = [
-        tkn_addr,
-        WETH_ADDRESS
-    ]
-    deadline = int(time.time()) + 300
+    path_sell = [tkn_addr, WETH_ADDRESS]
+    deadline  = int(time.time()) + 300
     try:
         nonce    = w3.eth.get_transaction_count(WALLET_ADDRESS)
         swap_txn = router_contract.functions.swapExactTokensForETH(
@@ -285,7 +289,7 @@ def sell_all_token(token_address: str) -> str | None:
         return None
 
     send_telegram(
-        f"[SELL] Mirror vente whale → vend {balance_token/1e18:.6f} tokens de {token_address}. Tx: {tx_hash_s}"
+        f"[SELL] Mirror vente whale → vend {balance_token/1e18:.6f} tokens de {tkn_addr}. Tx: {tx_hash_s}"
     )
     return tx_hash_s
 
@@ -295,46 +299,46 @@ def check_positions_and_maybe_sell():
     Parcourt la liste `positions` et vend si TP (+30 %) ou SL (−15 %) atteint.
     """
     global positions
+    nouvelles_positions: list[dict] = []
 
-    nouvelles_positions = []
     for pos in positions:
         token_address    = pos["token"]
         token_amount_wei = pos["token_amount_wei"]
         entry_eth        = pos["entry_eth"]      # Decimal
         entry_ratio      = pos["entry_ratio"]    # Decimal
 
-        # 1) Récupère la valeur ETH actuelle en vendant tout le token
-        tkn_addr    = Web3.to_checksum_address(token_address.lower())
+        tkn_addr    = Web3.to_checksum_address(token_address.strip().lower())
         path_to_eth = [tkn_addr, WETH_ADDRESS]
+
         try:
             amounts_out = router_contract.functions.getAmountsOut(token_amount_wei, path_to_eth).call()
         except Exception as e:
-            # Si échec, on conserve la position pour réessayer plus tard
-            print(f"⚠️ Warning getAmountsOut (check) pour {token_address}: {e}")
+            # Si échec, on garde la position pour réessayer plus tard
+            print(f"⚠️ Warning getAmountsOut (check) pour {tkn_addr}: {e}")
             nouvelles_positions.append(pos)
             continue
 
         current_eth_value = Decimal(amounts_out[1]) / Decimal(10**18)
         ratio = (current_eth_value / entry_eth).quantize(Decimal('0.0001'))
 
-        # 2) TAKE-PROFIT (+30 %)
+        # TAKE-PROFIT (+30 %)
         if ratio >= (Decimal('1.0') + TP_THRESHOLD):
             send_telegram(
-                f"✅ TAKE-PROFIT pour {token_address} : valeur actuelle = {current_eth_value:.6f} ETH "
+                f"✅ TAKE-PROFIT pour {tkn_addr}: valeur actuelle = {current_eth_value:.6f} ETH "
                 f"(+{(ratio - 1) * 100:.1f}% ), revente automatique…"
             )
             sell_all_token(token_address)
 
-        # 3) STOP-LOSS (−15 %)
+        # STOP-LOSS (−15 %)
         elif ratio <= (Decimal('1.0') - SL_THRESHOLD):
             send_telegram(
-                f"⚠️ STOP-LOSS pour {token_address} : valeur actuelle = {current_eth_value:.6f} ETH "
+                f"⚠️ STOP-LOSS pour {tkn_addr}: valeur actuelle = {current_eth_value:.6f} ETH "
                 f"(−{(1 - ratio) * 100:.1f}% ), revente automatique…"
             )
             sell_all_token(token_address)
 
         else:
-            # 4) Sinon, on conserve la position pour la prochaine vérif
+            # Sinon, on garde la position
             nouvelles_positions.append(pos)
 
     positions = nouvelles_positions
@@ -370,12 +374,9 @@ def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
 def send_telegram(msg: str):
     """
     Envoie un message Telegram en utilisant directement l'API HTTP.
-    Cela évite tout warning de coroutine non awaitée.
+    Évite tout warning de coroutine non awaitée.
     """
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": msg
-    }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
     try:
         requests.post(telegram_api_url, json=payload, timeout=5)
     except Exception as e:
@@ -402,10 +403,10 @@ def main_loop():
                 send_telegram(f"✅ Bot actif à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
                 last_heartbeat_time = time.time()
 
-            # ─── 13.a) Check TP / SL
+            # ─── 13.a) Vérifier TP / SL
             check_positions_and_maybe_sell()
 
-            # ─── 13.b) Scan des whales
+            # ─── 13.b) Scanner les whales
             for whale in WHALES:
                 start_block = last_processed_block.get(whale, 0)
                 txns        = fetch_etherscan_txns(whale, start_block)
@@ -416,12 +417,12 @@ def main_loop():
 
                     input_hex = tx.get("input", "")
 
-                    # Whale a acheté un token
+                    # Whale a acheté un token ?
                     if est_uniswap_swap_exact_eth_for_tokens(input_hex):
                         token_addr = extract_token_from_swap_eth_for_tokens(input_hex)
                         buy_token(token_addr, ETH_PER_TRADE)
 
-                    # Whale a vendu un token
+                    # Whale a vendu un token ?
                     elif est_uniswap_swap_exact_tokens_for_eth(input_hex):
                         token_addr = extract_token_from_swap_tokens_for_eth(input_hex)
                         sell_all_token(token_addr)
@@ -436,9 +437,9 @@ def main_loop():
 
                 summary_msg = (
                     f"🧾 Résumé du jour ({datetime.utcnow().strftime('%Y-%m-%d')}):\n"
-                    f"🔹 Positions ouvertes : {nb_positions}\n"
-                    f"🔹 Trades restants   : {trades_restants}/{MAX_TRADES_PER_MONTH}\n"
-                    f"🔹 Total investi     : {eth_investi:.6f} ETH"
+                    f"🔹 Positions ouvertes   : {nb_positions}\n"
+                    f"🔹 Trades restants      : {trades_restants}/{MAX_TRADES_PER_MONTH}\n"
+                    f"🔹 Total investi        : {eth_investi:.6f} ETH"
                 )
                 send_telegram(summary_msg)
                 next_summary_time += timedelta(days=1)
