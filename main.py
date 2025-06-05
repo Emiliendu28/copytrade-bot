@@ -9,9 +9,17 @@ from dotenv import load_dotenv
 from telegram import Bot
 from telegram.request import HTTPXRequest
 
+from telegram import Bot
+from telegram.request import HTTPXRequest
+
+from dotenv import load_dotenv
+load_dotenv()
+
+TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
+
 telegram_bot = Bot(token=TELEGRAM_TOKEN, request=HTTPXRequest())
 
-# ─── 1) CHARGEMENT DES VARIABLES D’ENVIRONNEMENT ─────────────────────────
 load_dotenv()
 
 PRIVATE_KEY       = os.getenv("PRIVATE_KEY")         # Clé privée (sans "0x")
@@ -39,7 +47,7 @@ telegram_bot = Bot(token=TELEGRAM_TOKEN)
 
 def send_telegram(msg: str):
     try:
-        ttelegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, timeout=5)
+        telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, timeout=5)
     except Exception as e:
         print("Erreur Telegram :", e)
 
