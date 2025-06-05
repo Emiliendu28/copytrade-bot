@@ -45,11 +45,11 @@ if not w3.is_connected():
 
 # ─── 3) ROUTER UNISWAP & WETH (version correcte en minuscules + checksum) ───
 
-# 3.a) Uniswap V2 Router (hard‐code en minuscules → to_checksum_address)
+# 3.a) Uniswap V2 Router (hard-codé en minuscules → to_checksum_address)
 raw_router = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d"
 UNISWAP_ROUTER_ADDRESS = Web3.to_checksum_address(raw_router.lower().strip())
 
-# 3.b) WETH (CORRIGÉ : adresse complète, en minuscules, avant d’appeler to_checksum_address)
+# 3.b) WETH (adresse complète en minuscules avant checksum)
 raw_weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
 WETH_ADDRESS = Web3.to_checksum_address(raw_weth.lower().strip())
 
@@ -111,9 +111,9 @@ ETH_PER_TRADE        = (monthly_budget_eth / MAX_TRADES_PER_MONTH).quantize(Deci
 print(f"Budget mensuel → {MONTHLY_BUDGET_EUR} € ≃ {monthly_budget_eth} ETH")
 print(f"→ {MAX_TRADES_PER_MONTH} trades/mois → {ETH_PER_TRADE} ETH par trade")
 
-# ─── 6) CONSTANTES TAKE‐PROFIT / STOP‐LOSS ────────────────────────────────
+# ─── 6) CONSTANTES TAKE-PROFIT / STOP-LOSS ─────────────────────────────────
 TP_THRESHOLD = Decimal('0.30')   # +30 % de prise de profit
-SL_THRESHOLD = Decimal('0.15')   # −15 % de stop‐loss
+SL_THRESHOLD = Decimal('0.15')   # −15 % de stop-loss
 
 # ─── Stocke les positions ouvertes ───────────────────────────────────────
 # Chaque entrée : {
@@ -345,7 +345,7 @@ def check_positions_and_maybe_sell():
         current_eth_value = Decimal(amounts_out[1]) / Decimal(10**18)
         ratio = (current_eth_value / entry_eth).quantize(Decimal('0.0001'))
 
-        # TAKE‐PROFIT (+30 %)
+        # TAKE-PROFIT (+30 %)
         if ratio >= (Decimal('1.0') + TP_THRESHOLD):
             send_telegram(
                 f"✅ TAKE-PROFIT pour {tkn_addr} : valeur actuelle = {current_eth_value:.6f} ETH "
@@ -353,7 +353,7 @@ def check_positions_and_maybe_sell():
             )
             sell_all_token(token_address)
 
-        # STOP‐LOSS (−15 %)
+        # STOP-LOSS (−15 %)
         elif ratio <= (Decimal('1.0') - SL_THRESHOLD):
             send_telegram(
                 f"⚠️ STOP-LOSS pour {tkn_addr} : valeur actuelle = {current_eth_value:.6f} ETH "
@@ -474,6 +474,6 @@ def main_loop():
             send_telegram(f"❌ Erreur bot : {e}")
             time.sleep(60)
 
-# ─── 14) LANCEMENT DE LA BOUCLE PRINCIPALE — SANS POLLING TELÉGRAM ───────
+# ─── 14) LANCEMENT DE LA BOUCLE PRINCIPALE — SANS POLLING TÉLÉGRAM ───────
 if __name__ == "__main__":
     main_loop()
