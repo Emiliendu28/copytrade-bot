@@ -384,69 +384,22 @@ def main():
     last_month_checked = datetime.utcnow().month
 
     send_telegram("🚀 Bot copytrade whales (Mirror + TP/SL) démarre.")
-    
     last_heartbeat_time = time.time()
-    
+
     while True:
         try:
             now = datetime.utcnow()
 
-            # 13.a) RESET BUDGET CHAQUE NOUVEAU MOIS
-            if now.month != last_month_checked:
-                trades_this_month = 0
-                last_month_checked = now.month
-                send_telegram("♻️ Nouveau mois détecté : budget mensuel remis à zéro.")
+            # 🔄 Ping Telegram toutes les heures
+            if time.time() - last_heartbeat_time > 3600:
+                send_telegram(f"✅ Bot actif à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
+                last_heartbeat_time = time.time()
 
-            # 13.b) SI BUDGET ACHAT dispo, on surveille les whales pour copier les BUY
-            if trades_this_month < MAX_TRADES_PER_MONTH:
-                for whale in WHALES:
-                    txs = fetch_etherscan_txns(whale, last_processed_block[whale] + 1)
-                    for tx in txs:
-                        tx_input = tx.get("input", "")
+            # 👉 ici continue ton code existant :
+            # ex : check budget, détecter transactions, TP/SL etc.
+            # ...
 
-                        # 13.b.1) Si la whale a fait un BUY (swapExactETHForTokens)
-                        if est_uniswap_swap_exact_eth_for_tokens(tx_input):
-                            montant_eth_sent = Decimal(
-                                w3.from_wei(int(tx["value"]), "ether")
-                            )
-                            montant_usd_approx = montant_eth_sent * ETH_PRICE_USD
-                            if montant_usd_approx >= Decimal('5000'):
-                                token_addr = extract_token_from_swap_eth_for_tokens(tx_input)
-                                tx_hash = buy_token(token_addr, ETH_PER_TRADE)
-                                if tx_hash:
-                                    trades_this_month += 1
-                                    time.sleep(10)
-
-                        # 13.b.2) Si la whale a fait un SELL (swapExactTokensForETH)
-                        elif est_uniswap_swap_exact_tokens_for_eth(tx_input):
-                            token_addr = extract_token_from_swap_tokens_for_eth(tx_input)
-                            sell_all_token(token_addr)
-                            time.sleep(5)
-
-                    # 13.b.3) Mise à jour du dernier bloc traité
-                    if txs:
-                        last_processed_block[whale] = max(int(t["blockNumber"]) for t in txs)
-
-            else:
-                # Budget mensuel épuisé → pause jusqu’au mois suivant
-                next_month = last_month_checked % 12 + 1
-                year = now.year if now.month < 12 else now.year + 1
-                first_next = datetime(year, next_month, 1)
-                secs_to_next = (first_next - now).total_seconds()
-                send_telegram("ℹ️ Budget mensuel atteint, pause jusqu’au mois prochain.")
-                time.sleep(max(secs_to_next, 0))
-
-            # 13.c) À chaque boucle, on vérifie si une position a atteint TP ou SL
-            if positions:
-                check_positions_and_maybe_sell()
-
-# Ping Telegram toutes les heures pour vérifier que le bot tourne
-if time.time() - last_heartbeat_time > 3600:
-    send_telegram(f"✅ Bot actif à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
-    last_heartbeat_time = time.time()
-            
-            # 13.d) Pause globale avant prochaine itération (30 s)
-            time.sleep(30)
+            time.sleep(30)  # ⏱️ pause entre les itérations
 
         except Exception as e:
             print(f"Erreur dans la boucle principale : {e}")
