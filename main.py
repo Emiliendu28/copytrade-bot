@@ -393,6 +393,10 @@ def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
 def main():
     trades_this_month = 0
     last_month_checked = datetime.utcnow().month
+    
+next_summary_time = datetime.utcnow().replace(hour=18, minute=0, second=0, microsecond=0)
+if datetime.utcnow() >= next_summary_time:
+    next_summary_time += timedelta(days=1)
 
     send_telegram("🚀 Bot copytrade whales (Mirror + TP/SL) démarre.")
     last_heartbeat_time = time.time()
@@ -410,6 +414,21 @@ def main():
             # check_positions_and_maybe_sell()
             # fetch_etherscan_txns(...)
             # ...
+
+# Résumé quotidien à 20h UTC (22h heure de Paris)
+if datetime.utcnow() >= next_summary_time:
+    nb_positions = len(positions)
+    trades_restants = MAX_TRADES_PER_MONTH - trades_this_month
+    eth_investi = trades_this_month * ETH_PER_TRADE
+
+    summary_msg = (
+        f"🧾 Résumé du jour ({datetime.utcnow().strftime('%Y-%m-%d')}):\n"
+        f"🔹 Positions ouvertes : {nb_positions}\n"
+        f"🔹 Trades restants : {trades_restants}/{MAX_TRADES_PER_MONTH}\n"
+        f"🔹 Total investi : {eth_investi:.6f} ETH"
+    )
+    send_telegram(summary_msg)
+    next_summary_time += timedelta(days=1)
 
             time.sleep(30)
 
