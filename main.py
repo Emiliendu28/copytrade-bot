@@ -393,14 +393,16 @@ def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
 def main():
     trades_this_month = 0
     last_month_checked = datetime.utcnow().month
-    
-next_summary_time = datetime.utcnow().replace(hour=18, minute=0, second=0, microsecond=0)
+
+    next_summary_time = datetime.utcnow().replace(hour=18, minute=0, second=0, microsecond=0)
 
     send_telegram("🚀 Bot copytrade whales (Mirror + TP/SL) démarre.")
     last_heartbeat_time = time.time()
 
     while True:
         try:
+            now = datetime.utcnow()
+
             now = datetime.utcnow()
 
             # 🔄 Ping toutes les heures
