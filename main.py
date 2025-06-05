@@ -3,6 +3,7 @@ import time
 import requests
 from datetime import datetime, timedelta
 from decimal import Decimal
+from threading import Thread
 
 from web3 import Web3
 from dotenv import load_dotenv
@@ -254,7 +255,7 @@ def sell_all_token(token_address: str) -> str | None:
     # 9.b) swapExactTokensForETH du solde complet
     path_sell = [
         token_address,
-        Web3.to_checksum_address("0xC02aaA39b223FE8D0A0e5C756Cc2")
+        Web3.to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
     ]
     deadline = int(time.time()) + 300
     try:
@@ -379,7 +380,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── 13) FONCTION D’ENVOI DE MESSAGE SUR TELEGRAM ────────────────────────
 def send_telegram(msg: str):
     try:
-        # On passe UNIQUEMENT text=msg (plus de timeout)
+        # On passe UNIQUEMENT text=msg (pas de timeout)
         telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
     except Exception as e:
         print("Erreur Telegram :", e)
@@ -408,7 +409,7 @@ def main_loop():
             #     txns = fetch_etherscan_txns(whale, last_processed_block[whale])
             #     # → traite txns, met à jour last_processed_block, etc.
 
-            # Résumé quotidien à 20h UTC (22h heure de Paris)
+            # Résumé quotidien à 20h UTC (22h heure Paris)
             if datetime.utcnow() >= next_summary_time:
                 nb_positions = len(positions)
                 trades_restants = MAX_TRADES_PER_MONTH - trades_this_month
@@ -432,17 +433,15 @@ def main_loop():
 
 # ─── 15) LANCEMENT DU BOT ET DE LA BOUCLE PRINCIPALE ──────────────────────
 if __name__ == "__main__":
-    import threading
     import asyncio
 
     # 1) On démarre la boucle principale dans un thread séparé
-    thread_loop = threading.Thread(target=main_loop, daemon=True)
-    thread_loop.start()
+    Thread(target=main_loop, daemon=True).start()
 
-    # 2) On construit l’application Telegram via ApplicationBuilder
+    # 2) On crée l’application Telegram avec ApplicationBuilder (v20+)
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("status", status))
-    # → Si tu as d’autres commandes (/trade, MessageHandler, etc.), ajoute-les ici.
+    # → Si tu as d’autres handlers (/trade, MessageHandler, etc.), ajoute-les ici
 
     # 3) On supprime l’ancien webhook (pour éviter le conflit webhook/polling)
     async def clear_webhook():
@@ -450,5 +449,5 @@ if __name__ == "__main__":
 
     asyncio.run(clear_webhook())
 
-    # 4) On démarre le bot en polling (c’est la seule méthode de polling : plus de Updater.start_polling)
+    # 4) On démarre le bot en polling (seul appel autorisé pour le polling)
     application.run_polling()
