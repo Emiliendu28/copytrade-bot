@@ -44,6 +44,25 @@ if not w3.is_connected():
 
 # ─── 3) INITIALISATION DU BOT TELEGRAM ──────────────────────────────────
 telegram_bot = Bot(token=TELEGRAM_TOKEN)
+from telegram.ext import CommandHandler, Updater, CallbackContext
+updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
+dispatcher = updater.dispatcher
+
+positions: list[dict] = []
+
+def status(update: Update, context: CallbackContext):
+    total_trades = len(positions)
+    invested = sum(p['entry_eth'] for p in positions)
+    msg = f"📊 Statut actuel du bot:\n\n"
+    msg += f"🔁 Positions ouvertes : {total_trades}\n💰 Investi : {invested:.6f} ETH\n"
+    if total_trades > 0:
+        for pos in positions:
+            msg += f"→ Token {pos['token']} | {pos['entry_eth']} ETH\n"
+    else:
+        msg += "Aucune position ouverte actuellement."
+    context.bot.send_message(chat_id=update.effective_chat.id, text=msg)
+
+dispatcher.add_handler(CommandHandler('status', status))
 
 def send_telegram(msg: str):
     try:
@@ -397,6 +416,8 @@ def main():
 
     send_telegram("🚀 Bot copytrade whales (Mirror + TP/SL) démarre.")
     last_heartbeat_time = time.time()
+
+    updater.start_polling()
 
     while True:
         try:
