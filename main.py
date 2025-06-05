@@ -385,8 +385,8 @@ def main():
 
     send_telegram("🚀 Bot copytrade whales (Mirror + TP/SL) démarre.")
     
-last_heartbeat_time = time.time()
-
+    last_heartbeat_time = time.time()
+    
     while True:
         try:
             now = datetime.utcnow()
