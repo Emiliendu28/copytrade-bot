@@ -390,16 +390,17 @@ def main():
         try:
             now = datetime.utcnow()
 
-            # 🔄 Ping Telegram toutes les heures
+            # 🔄 Ping toutes les heures
             if time.time() - last_heartbeat_time > 3600:
                 send_telegram(f"✅ Bot actif à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
                 last_heartbeat_time = time.time()
 
-            # 👉 ici continue ton code existant :
-            # ex : check budget, détecter transactions, TP/SL etc.
+            # (exemple à continuer)
+            # check_positions_and_maybe_sell()
+            # fetch_etherscan_txns(...)
             # ...
 
-            time.sleep(30)  # ⏱️ pause entre les itérations
+            time.sleep(30)
 
         except Exception as e:
             print(f"Erreur dans la boucle principale : {e}")
