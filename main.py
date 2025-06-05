@@ -22,10 +22,10 @@ TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY")
 
-# Instanciation du Bot Telegram (utilisé par send_telegram)
+# Instanciation du Bot Telegram (pour send_telegram)
 telegram_bot = Bot(token=TELEGRAM_TOKEN, request=HTTPXRequest())
 
-# ─── DEBUG RAPIDE (vérifie que tes variables d’environnement sont chargées) ─
+# ─── DEBUG RAPIDE (vérifier le chargement des variables) ─────────────────
 print("DEBUG → PRIVATE_KEY loaded   :", PRIVATE_KEY is not None)
 print("DEBUG → WALLET_ADDRESS      :", WALLET_ADDRESS)
 print("DEBUG → INFURA_URL          :", INFURA_URL and INFURA_URL.startswith("https://"))
@@ -438,16 +438,16 @@ if __name__ == "__main__":
     # 1) On démarre la boucle principale dans un thread séparé
     Thread(target=main_loop, daemon=True).start()
 
-    # 2) On construit l’application Telegram (API v20+) et on ajoute /status
+    # 2) Création de l’application Telegram (API v20+) et ajout de /status
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("status", status))
-    # → Si tu as d’autres handlers (/trade ou MessageHandler, etc.), ajoute-les ici.
+    # → Ajoutez ici vos autres handlers (/trade, MessageHandler, etc.)
 
-    # 3) On supprime l’ancien webhook (évite tout conflit webhook ↔ polling)
+    # 3) Suppression de l’ancien webhook (pour éviter le conflit webhook/polling)
     async def clear_webhook():
         await application.bot.delete_webhook(drop_pending_updates=True)
 
     asyncio.run(clear_webhook())
 
-    # 4) On démarre **uniquement** en polling (plus aucun Updater.start_polling)
+    # 4) On démarre **uniquement** en polling (aucune référence à Updater)
     application.run_polling()
