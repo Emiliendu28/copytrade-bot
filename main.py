@@ -458,4 +458,10 @@ if __name__ == "__main__":
     # application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
     # 3. Run polling → le bot reste actif en continu sur Render
+    import asyncio
+
+async def clear_webhook():
+    await application.bot.delete_webhook(drop_pending_updates=True)
+
+asyncio.run(clear_webhook())
     application.run_polling()
