@@ -464,4 +464,4 @@ async def clear_webhook():
     await application.bot.delete_webhook(drop_pending_updates=True)
 
 asyncio.run(clear_webhook())
-    application.run_polling()
+application.run_polling()
