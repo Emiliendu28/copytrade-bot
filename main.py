@@ -10,8 +10,21 @@ from dotenv import load_dotenv
 # ─── 1) CHARGEMENT DES VARIABLES D’ENVIRONNEMENT ─────────────────────────
 load_dotenv()
 
+# → On vérifie explicitement que WALLET_ADDRESS existe et n’est pas vide
+raw_wallet = os.getenv("WALLET_ADDRESS")
+if raw_wallet is None or raw_wallet.strip() == "":
+    raise ValueError(
+        "❌ Erreur de configuration : la variable d'environnement 'WALLET_ADDRESS' "
+        "n'est pas définie ou est vide. "
+        "Allez dans votre Dashboard Render → Settings → Environment → Variables, "
+        "et ajoutez :\n"
+        "   Key : WALLET_ADDRESS\n"
+        "   Value : 0xabcdef1234… (votre adresse Ethereum, en minuscules)\n"
+        "puis redeployez."
+    )
+WALLET_ADDRESS = Web3.to_checksum_address(raw_wallet.strip().lower())
+
 PRIVATE_KEY       = os.getenv("PRIVATE_KEY")
-WALLET_ADDRESS    = Web3.to_checksum_address(os.getenv("WALLET_ADDRESS").strip().lower())
 INFURA_URL        = os.getenv("INFURA_URL")
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
@@ -23,12 +36,14 @@ telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 # ─── 2) INITIALISATION DE WEB3 ────────────────────────────────────────────
 w3 = Web3(Web3.HTTPProvider(INFURA_URL))
 if not w3.is_connected():
-    raise ConnectionError("Impossible de se connecter à Infura. Vérifie INFURA_URL.")
+    raise ConnectionError("Impossible de se connecter à Infura. Vérifiez INFURA_URL.")
 
 # ─── 3) ROUTER UNISWAP & WETH (tout en minuscules avant conversion) ──────
 raw_router = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d"
 UNISWAP_ROUTER_ADDRESS = Web3.to_checksum_address(raw_router.lower().strip())
 
+# Pour WETH, soit vous le définissez dans .env, soit vous le hard-codez en minuscules :
+# Exemple hard-code (on met tout en minuscules pour éviter l’erreur) :
 raw_weth = "0xc02aaa39b223fe8d0a0e5c4f27e756cc2"
 WETH_ADDRESS = Web3.to_checksum_address(raw_weth.lower().strip())
 
@@ -87,12 +102,12 @@ print(f"Budget mensuel → {MONTHLY_BUDGET_EUR} € ≃ {monthly_budget_eth} ETH
 print(f"→ {MAX_TRADES_PER_MONTH} trades/mois → {ETH_PER_TRADE} ETH par trade")
 
 # ─── 6) CONSTANTES TAKE-PROFIT / STOP-LOSS ────────────────────────────────
-TP_THRESHOLD = Decimal('0.30')   # Take-profit à +30 %
-SL_THRESHOLD = Decimal('0.15')   # Stop-loss à −15 %
+TP_THRESHOLD = Decimal('0.30')   # Take-profit = +30 %
+SL_THRESHOLD = Decimal('0.15')   # Stop-loss = −15 %
 
-# Positions ouvertes (globale)
+# Stocke les positions ouvertes
 # Chaque position = {
-#   "token": str (hex address),
+#   "token": str,
 #   "token_amount_wei": int,
 #   "entry_eth": Decimal,
 #   "entry_ratio": Decimal
@@ -109,9 +124,8 @@ def est_uniswap_swap_exact_tokens_for_eth(input_hex: str) -> bool:
 def extract_token_from_swap_eth_for_tokens(input_hex: str) -> str:
     """
     Extrait l’adresse du token de l’input hex d’un swapExactETHForTokens.
-    On force le token_hex en minuscules avant to_checksum_address.
+    On force le token_hex en minuscules avant écriture.
     """
-    full        = input_hex[2:]
     path_offset = 8 + 64 + 64
     token_start = 2 + path_offset + 64 + 24
     token_hex   = input_hex[token_start : token_start + 40]
@@ -121,9 +135,8 @@ def extract_token_from_swap_eth_for_tokens(input_hex: str) -> str:
 def extract_token_from_swap_tokens_for_eth(input_hex: str) -> str:
     """
     Extrait l’adresse du token de l’input hex d’un swapExactTokensForETH.
-    On force le token_hex en minuscules avant to_checksum_address.
+    On force le token_hex en minuscules avant écriture.
     """
-    full        = input_hex[2:]
     path_offset = 8 + 64 + 64 + 64
     token_start = 2 + path_offset + 64 + 24
     token_hex   = input_hex[token_start : token_start + 40]
@@ -313,7 +326,7 @@ def check_positions_and_maybe_sell():
         try:
             amounts_out = router_contract.functions.getAmountsOut(token_amount_wei, path_to_eth).call()
         except Exception as e:
-            # Si échec, on garde la position pour réessayer plus tard
+            # Si échec, on garde la position pour la prochaine fois
             print(f"⚠️ Warning getAmountsOut (check) pour {tkn_addr}: {e}")
             nouvelles_positions.append(pos)
             continue
@@ -343,10 +356,10 @@ def check_positions_and_maybe_sell():
 
     positions = nouvelles_positions
 
-# ─── 11) RÉCUPÉRATION DES TRANSACTIONS D’UNE WHALE VIA ETHERSCAN ─────────
+# ─── 11) RÉCUPÉRATION DES TX ERC20 D’UNE WHALE VIA ETHERSCAN ──────────
 def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
     """
-    Interroge l'API Etherscan (module=account, action=tokentx) pour toutes les tx ERC-20
+    Interroge l’API Etherscan (module=account, action=tokentx) pour toutes les TX ERC-20
     de la whale à partir de start_block (inclus).
     """
     url = (
@@ -370,11 +383,11 @@ def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
         print("Erreur HTTP Etherscan :", e)
         return []
 
-# ─── 12) FONCTION D’ENVOI DE MESSAGE SUR TELEGRAM (HTTP) ─────────────────
+# ─── 12) ENVOI DE MESSAGE SUR TELEGRAM (HTTP) ─────────────────────────
 def send_telegram(msg: str):
     """
-    Envoie un message Telegram en utilisant directement l'API HTTP.
-    Évite tout warning de coroutine non awaitée.
+    Envoie un message Telegram via l’API HTTP.
+    Aucun warning de coroutine, c’est 100% synchrone.
     """
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg}
     try:
@@ -382,7 +395,7 @@ def send_telegram(msg: str):
     except Exception as e:
         print("Erreur Telegram (HTTP) :", e)
 
-# ─── 13) BOUCLE PRINCIPALE DU BOT (TP/SL, scan Whale, résumé quotidien…) ───
+# ─── 13) BOUCLE PRINCIPALE DU BOT (TP/SL, scan Whale, résumé quotidien…) ─
 def main_loop():
     trades_this_month  = 0
     last_month_checked = datetime.utcnow().month
@@ -398,15 +411,15 @@ def main_loop():
         try:
             now = datetime.utcnow()
 
-            # 🔄 Ping toutes les heures pour prouver que le bot est actif
+            # 🔄 Ping toutes les heures (pour prouver que le bot tourne)
             if time.time() - last_heartbeat_time > 3600:
                 send_telegram(f"✅ Bot actif à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
                 last_heartbeat_time = time.time()
 
-            # ─── 13.a) Vérifier TP / SL
+            # ─── 13.a) Check TP / SL
             check_positions_and_maybe_sell()
 
-            # ─── 13.b) Scanner les whales
+            # ─── 13.b) Scan des whales
             for whale in WHALES:
                 start_block = last_processed_block.get(whale, 0)
                 txns        = fetch_etherscan_txns(whale, start_block)
@@ -417,19 +430,19 @@ def main_loop():
 
                     input_hex = tx.get("input", "")
 
-                    # Whale a acheté un token ?
+                    # Si la whale a acheté un token
                     if est_uniswap_swap_exact_eth_for_tokens(input_hex):
                         token_addr = extract_token_from_swap_eth_for_tokens(input_hex)
                         buy_token(token_addr, ETH_PER_TRADE)
 
-                    # Whale a vendu un token ?
+                    # Si la whale a vendu un token
                     elif est_uniswap_swap_exact_tokens_for_eth(input_hex):
                         token_addr = extract_token_from_swap_tokens_for_eth(input_hex)
                         sell_all_token(token_addr)
 
                     last_processed_block[whale] = block_number
 
-            # ─── 13.c) Résumé quotidien à 18h (heure de Paris / 16h UTC)
+            # ─── 13.c) Résumé quotidien à 18 h (heure de Paris / 16 h UTC)
             if datetime.utcnow() >= next_summary_time:
                 nb_positions    = len(positions)
                 trades_restants = MAX_TRADES_PER_MONTH - trades_this_month
