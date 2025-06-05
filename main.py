@@ -7,6 +7,7 @@ from decimal import Decimal
 from web3 import Web3
 from dotenv import load_dotenv
 from telegram import Bot
+from telegram.ext import ContextTypes
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram.request import HTTPXRequest
@@ -49,7 +50,7 @@ application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 positions: list[dict] = []
 
-def status(update: Update, context: CallbackContext):
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_trades = len(positions)
     invested = sum(p['entry_eth'] for p in positions)
     msg = f"📊 Statut actuel du bot:\n\n"
