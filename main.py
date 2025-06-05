@@ -384,6 +384,8 @@ def main():
     last_month_checked = datetime.utcnow().month
 
     send_telegram("🚀 Bot copytrade whales (Mirror + TP/SL) démarre.")
+    
+last_heartbeat_time = time.time()
 
     while True:
         try:
@@ -438,6 +440,11 @@ def main():
             if positions:
                 check_positions_and_maybe_sell()
 
+# Ping Telegram toutes les heures pour vérifier que le bot tourne
+if time.time() - last_heartbeat_time > 3600:
+    send_telegram(f"✅ Bot actif à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
+    last_heartbeat_time = time.time()
+            
             # 13.d) Pause globale avant prochaine itération (30 s)
             time.sleep(30)
 
