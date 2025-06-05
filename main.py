@@ -21,6 +21,12 @@ load_dotenv()
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
 
+from telegram.ext import Updater, CommandHandler
+
+# Initialiser le bot Telegram
+updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
+dispatcher = updater.dispatcher
+
 load_dotenv()
 
 PRIVATE_KEY       = os.getenv("PRIVATE_KEY")         # Clé privée (sans "0x")
@@ -475,3 +481,5 @@ if __name__ == "__main__":
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("status", status))
     application.run_polling()
+    updater.start_polling()
+    updater.idle()
