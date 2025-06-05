@@ -389,11 +389,10 @@ def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
         print("Erreur HTTP Etherscan :", e)
         return []
 
-# ─── 13) BOUCLE PRINCIPALE DU BOT ────────────────────────────────────────
+# ─── 13) BOUCLE PRINCIPALE DU BOT ─────────────────────────────────────────────
 def main():
     trades_this_month = 0
     last_month_checked = datetime.utcnow().month
-
     next_summary_time = datetime.utcnow().replace(hour=18, minute=0, second=0, microsecond=0)
 
     send_telegram("🚀 Bot copytrade whales (Mirror + TP/SL) démarre.")
@@ -401,8 +400,6 @@ def main():
 
     while True:
         try:
-            now = datetime.utcnow()
-
             now = datetime.utcnow()
 
             # 🔄 Ping toutes les heures
