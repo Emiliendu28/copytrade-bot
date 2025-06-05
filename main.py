@@ -3,42 +3,42 @@ import time
 import requests
 from datetime import datetime, timedelta
 from decimal import Decimal
+
 from threading import Thread
 
 from web3 import Web3
 from dotenv import load_dotenv
 
-from telegram import Bot, Update
+from telegram import Bot
 from telegram.request import HTTPXRequest
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # ─── 1) CHARGEMENT DES VARIABLES D’ENVIRONNEMENT ─────────────────────────
 load_dotenv()
 
-PRIVATE_KEY       = os.getenv("PRIVATE_KEY")
+PRIVATE_KEY       = os.getenv("PRIVATE_KEY")         # Clé privée (sans "0x")
 WALLET_ADDRESS    = Web3.to_checksum_address(os.getenv("WALLET_ADDRESS"))
 INFURA_URL        = os.getenv("INFURA_URL")
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY")
 
-# Instanciation du Bot Telegram (utilisé par send_telegram)
+# Instanciation du Bot Telegram (utilisé dans send_telegram())
 telegram_bot = Bot(token=TELEGRAM_TOKEN, request=HTTPXRequest())
 
-# ─── DEBUG RAPIDE (vérification du chargement) ────────────────────────────
-print("DEBUG → PRIVATE_KEY loaded   :", PRIVATE_KEY is not None)
-print("DEBUG → WALLET_ADDRESS      :", WALLET_ADDRESS)
-print("DEBUG → INFURA_URL          :", INFURA_URL and INFURA_URL.startswith("https://"))
-print("DEBUG → TELEGRAM_TOKEN      :", bool(TELEGRAM_TOKEN))
-print("DEBUG → TELEGRAM_CHAT_ID    :", TELEGRAM_CHAT_ID)
-print("DEBUG → ETHERSCAN_API_KEY   :", ETHERSCAN_API_KEY is not None)
+# ─── DEBUG RAPIDE (pour s’assurer que tout est bien chargé) ───────────────
+print("DEBUG → PRIVATE_KEY loaded :", PRIVATE_KEY is not None)
+print("DEBUG → WALLET_ADDRESS    :", WALLET_ADDRESS)
+print("DEBUG → INFURA_URL        :", INFURA_URL and INFURA_URL.startswith("https://"))
+print("DEBUG → TELEGRAM_TOKEN    :", bool(TELEGRAM_TOKEN))
+print("DEBUG → TELEGRAM_CHAT_ID  :", TELEGRAM_CHAT_ID)
+print("DEBUG → ETHERSCAN_API_KEY :", ETHERSCAN_API_KEY is not None)
 
 # ─── 2) INITIALISATION DE WEB3 ────────────────────────────────────────────
 w3 = Web3(Web3.HTTPProvider(INFURA_URL))
 if not w3.is_connected():
     raise ConnectionError("Impossible de se connecter à Infura. Vérifie INFURA_URL.")
 
-# ─── 3) CONFIGURATION DU ROUTER UNISWAP V2 ────────────────────────────────
+# ─── 3) INITIALISATION DU ROUTER UNISWAP V2 ────────────────────────────────
 UNISWAP_ROUTER_ADDRESS = Web3.to_checksum_address(
     "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"
 )
@@ -98,7 +98,7 @@ print(f"→ {MAX_TRADES_PER_MONTH} trades/mois → {ETH_PER_TRADE} ETH par trade
 TP_THRESHOLD = Decimal('0.30')   # Take-profit à +30 %
 SL_THRESHOLD = Decimal('0.15')   # Stop-loss à −15 %
 
-# Liste globale pour stocker les positions
+# Liste globale pour stocker les positions ouvertes
 # Chaque position = { "token": str, "token_amount_wei": int, "entry_eth": Decimal, "entry_ratio": Decimal }
 positions: list[dict] = []
 
@@ -126,9 +126,8 @@ def extract_token_from_swap_tokens_for_eth(input_hex: str) -> str:
 # ─── 8) ACHAT (BUY) SUR UNISWAP + STOCKAGE DE POSITION ───────────────────
 def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
     """
-    Mirror BUY :
-    - swapExactETHForTokens pour 'eth_amount' ETH,
-    - stocke ensuite la position dans `positions`.
+    Mirror BUY : swapExactETHForTokens pour 'eth_amount' ETH,
+    puis stocke la position dans `positions` (token, quantité, prix d’entrée).
     """
     balance_wei = w3.eth.get_balance(WALLET_ADDRESS)
     balance_eth = w3.from_wei(balance_wei, 'ether')
@@ -140,7 +139,7 @@ def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
     path_buy = [weth_address, Web3.to_checksum_address(token_address)]
     amount_in_wei = w3.to_wei(eth_amount, 'ether')
 
-    # 1) On estime combien de tokens on obtiendra
+    # 1) Estimer la quantité de tokens obtenue
     try:
         amounts_out = router_contract.functions.getAmountsOut(amount_in_wei, path_buy).call()
     except Exception as e:
@@ -152,12 +151,12 @@ def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
     entry_eth = eth_amount
     entry_ratio = (entry_eth / token_amount_estimate).quantize(Decimal('0.000000000001'))
 
-    # 2) Génère et envoie la transaction swapExactETHForTokens
+    # 2) Construction + envoi de la transaction swapExactETHForTokens
     deadline = int(time.time()) + 300
     nonce = w3.eth.get_transaction_count(WALLET_ADDRESS)
     try:
         txn = router_contract.functions.swapExactETHForTokens(
-            0,  # amountOutMin = 0
+            0,               # amountOutMin = 0
             path_buy,
             WALLET_ADDRESS,
             deadline
@@ -180,7 +179,7 @@ def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
         send_telegram(f"Erreur send_raw_transaction (buy): {e}")
         return None
 
-    # 3) Stockage de la position pour TP/SL plus tard
+    # 3) Stockage de la position pour TP/SL futur
     positions.append({
         "token": token_address,
         "token_amount_wei": token_amount_estimate_wei,
@@ -217,9 +216,8 @@ ERC20_ABI = [
 
 def sell_all_token(token_address: str) -> str | None:
     """
-    Mirror SELL :
-    - vend la totalité du token 'token_address' sur Uniswap,
-    - avec APPROVE puis swapExactTokensForETH.
+    Mirror SELL : vend toute la balance du token 'token_address'.
+    1) Approve du token → 2) swapExactTokensForETH.
     """
     token_address = Web3.to_checksum_address(token_address)
     token_contract = w3.eth.contract(address=token_address, abi=ERC20_ABI)
@@ -249,7 +247,7 @@ def sell_all_token(token_address: str) -> str | None:
         tx_hash_a = w3.eth.send_raw_transaction(signed_approve.raw_transaction)
         tx_a = tx_hash_a.hex()
         send_telegram(f"[APPROVE] {token_address} → Router. Tx: {tx_a}")
-        time.sleep(15)  # attend que l’approve soit miné
+        time.sleep(15)  # attente pour que l’approve soit miné
     except Exception as e:
         send_telegram(f"Erreur Approve (sell): {e}")
         return None
@@ -304,8 +302,8 @@ def check_positions_and_maybe_sell():
     for pos in positions:
         token_address    = pos["token"]
         token_amount_wei = pos["token_amount_wei"]
-        entry_eth        = pos["entry_eth"]      # type: Decimal
-        entry_ratio      = pos["entry_ratio"]    # type: Decimal
+        entry_eth        = pos["entry_eth"]      # Decimal
+        entry_ratio      = pos["entry_ratio"]    # Decimal
 
         # 1) Récupère la valeur ETH actuelle en vendant tout le token
         path_to_eth = [token_address, WETH_ADDRESS]
@@ -369,32 +367,23 @@ def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
         print("Erreur HTTP Etherscan :", e)
         return []
 
-# ─── 12) HANDLER /status ───────────────────────────────────────────────────
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    total_trades = len(positions)
-    invested = sum(p['entry_eth'] for p in positions)
-    msg = f"📊 Statut actuel du bot:\n\n"
-    msg += f"🔁 Positions ouvertes : {total_trades}\n💰 Investi : {invested:.6f} ETH\n"
-    if total_trades > 0:
-        for pos in positions:
-            msg += f"→ Token {pos['token']} | {pos['entry_eth']} ETH\n"
-    else:
-        msg += "Aucune position ouverte actuellement."
-    await update.message.reply_text(msg)
-
-# ─── 13) FONCTION D’ENVOI DE MESSAGE SUR TELEGRAM ────────────────────────
+# ─── 12) FONCTION D’ENVOI DE MESSAGE SUR TELEGRAM ────────────────────────
 def send_telegram(msg: str):
     try:
-        # On n’envoie jamais de timeout ici ; on utilise simplement telegram_bot.send_message
         telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
     except Exception as e:
         print("Erreur Telegram :", e)
 
-# ─── 14) BOUCLE PRINCIPALE DU BOT (TP/SL, scan Whale, résumé quotidien…) ───
+# ─── 13) BOUCLE PRINCIPALE DU BOT (TP/SL, scan Whale, résumé quotidien…) ───
 def main_loop():
     trades_this_month = 0
     last_month_checked = datetime.utcnow().month
-    next_summary_time = datetime.utcnow().replace(hour=18, minute=0, second=0, microsecond=0)
+    # On veut envoyer le résumé chaque jour à 18 h heure de Paris (16 h UTC),
+    # c’est-à-dire 18 h complicité locale. Ici, on fixe 16 h UTC (puisqu’on est en GMT+2).
+    next_summary_time = datetime.utcnow().replace(hour=16, minute=0, second=0, microsecond=0)
+    if datetime.utcnow() >= next_summary_time:
+        # Si on est déjà passé au-delà de 16 h UTC aujourd’hui, on cible demain.
+        next_summary_time += timedelta(days=1)
 
     send_telegram("🚀 Bot copytrade whales (Mirror + TP/SL) démarre.")
     last_heartbeat_time = time.time()
@@ -403,18 +392,40 @@ def main_loop():
         try:
             now = datetime.utcnow()
 
-            # 🔄 Ping toutes les heures pour montrer que le bot est alive
+            # 🔄 Ping toutes les heures pour prouver que le bot est toujours actif
             if time.time() - last_heartbeat_time > 3600:
-                send_telegram(f"✅ Bot actif à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
+                send_telegram(f"✅ Bot actif à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
                 last_heartbeat_time = time.time()
 
-            # Exemple d’appels à tes fonctions de trading :
-            # check_positions_and_maybe_sell()
-            # for whale in WHALES:
-            #     txns = fetch_etherscan_txns(whale, last_processed_block[whale])
-            #     # → traite txns, met à jour last_processed_block, etc.
+            # ─── 13.a) Exemple de check TP/SL
+            check_positions_and_maybe_sell()
 
-            # Résumé quotidien à 20h UTC (22h heure de Paris)
+            # ─── 13.b) Exemple de scan des whales (vous pouvez adapter selon votre logique)
+            for whale in WHALES:
+                start_block = last_processed_block.get(whale, 0)
+                txns = fetch_etherscan_txns(whale, start_block)
+                for tx in txns:
+                    # Si c’est un swapExactETHForTokens (achat) on le “mirror”
+                    input_hex = tx.get("input", "")
+                    block_number = int(tx.get("blockNumber", 0))
+                    if block_number <= last_processed_block[whale]:
+                        continue
+
+                    # 1) Whale a acheté un token
+                    if est_uniswap_swap_exact_eth_for_tokens(input_hex):
+                        token_addr = extract_token_from_swap_eth_for_tokens(input_hex)
+                        # On effectue un buy “mirror” du même montant alloué
+                        buy_token(token_addr, ETH_PER_TRADE)
+
+                    # 2) Whale a vendu un token
+                    elif est_uniswap_swap_exact_tokens_for_eth(input_hex):
+                        token_addr = extract_token_from_swap_tokens_for_eth(input_hex)
+                        # On effectue un sell “mirror” (toute la position)
+                        sell_all_token(token_addr)
+
+                    last_processed_block[whale] = block_number
+
+            # ─── 13.c) Résumé quotidien à 18 h (heure de Paris / 16 h UTC)
             if datetime.utcnow() >= next_summary_time:
                 nb_positions = len(positions)
                 trades_restants = MAX_TRADES_PER_MONTH - trades_this_month
@@ -427,8 +438,11 @@ def main_loop():
                     f"🔹 Total investi : {eth_investi:.6f} ETH"
                 )
                 send_telegram(summary_msg)
+
+                # On planifie le prochain résumé pour demain à la même heure
                 next_summary_time += timedelta(days=1)
 
+            # Petite pause avant la prochaine itération
             time.sleep(30)
 
         except Exception as e:
@@ -436,23 +450,8 @@ def main_loop():
             send_telegram(f"❌ Erreur bot : {e}")
             time.sleep(60)
 
-# ─── 15) LANCEMENT DU BOT ET DE LA BOUCLE PRINCIPALE ──────────────────────
+# ─── 14) LANCEMENT DE LA BOUCLE PRINCIPALE (PUISQUE PAS DE POLLING) ─────────
 if __name__ == "__main__":
-    import asyncio
-
-    # 1) On démarre d’abord la boucle principale dans un thread séparé
-    Thread(target=main_loop, daemon=True).start()
-
-    # 2) On crée l’application Telegram (API v20+) et on ajoute /status
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler("status", status))
-    # → Si tu as d’autres handlers (/trade, MessageHandler, etc.), ajoute-les ici.
-
-    # 3) On supprime l’ancien webhook pour éviter tout conflit webhook ↔ polling
-    async def clear_webhook():
-        await application.bot.delete_webhook(drop_pending_updates=True)
-
-    asyncio.run(clear_webhook())
-
-    # 4) Enfin, on démarre **uniquement** en polling (aucune référence à Updater)
-    application.run_polling()
+    # On exécute main_loop() dans le thread principal directement
+    # (pas de ApplicationBuilder ni de /status)
+    main_loop()
