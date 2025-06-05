@@ -88,9 +88,7 @@ def eur_to_eth(eur_amount: Decimal) -> Decimal:
 
 monthly_budget_eth   = eur_to_eth(MONTHLY_BUDGET_EUR)
 MAX_TRADES_PER_MONTH = 5
-ETH_PER_TRADE        = (monthly_budget_eth / MAX_TRADES_PER_MONTH).quantize(
-    Decimal('0.000001')
-)
+ETH_PER_TRADE        = (monthly_budget_eth / MAX_TRADES_PER_MONTH).quantize(Decimal('0.000001'))
 
 print(f"Budget mensuel → {MONTHLY_BUDGET_EUR} € ≃ {monthly_budget_eth} ETH")
 print(f"→ {MAX_TRADES_PER_MONTH} trades/mois → {ETH_PER_TRADE} ETH par trade")
@@ -302,7 +300,7 @@ def check_positions_and_maybe_sell():
     """
     global positions
 
-    WETH_ADDRESS = Web3.to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+    WETH_ADDRESS = Web3.to_checksum_address("0xC02aaA39b223FE8D0A0e5C756Cc2")
     nouvelles_positions = []
 
     for pos in positions:
@@ -391,7 +389,8 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── 13) FONCTION D’ENVOI DE MESSAGE SUR TELEGRAM ────────────────────────
 def send_telegram(msg: str):
     try:
-        telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, timeout=5)
+        # On passe **UNIQUEMENT** text=msg, sans timeout
+        telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
     except Exception as e:
         print("Erreur Telegram :", e)
 
@@ -413,11 +412,11 @@ def main_loop():
                 send_telegram(f"✅ Bot actif à {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
                 last_heartbeat_time = time.time()
 
-            # Exemples d’appels de tes fonctions :
+            # Exemple d’appels à tes fonctions de trading :
             # check_positions_and_maybe_sell()
             # for whale in WHALES:
             #     txns = fetch_etherscan_txns(whale, last_processed_block[whale])
-            #     # → traiter txns pour mirror, update last_processed_block, etc.
+            #     # → traite txns, met à jour last_processed_block, etc.
 
             # Résumé quotidien à 20h UTC (22h heure de Paris)
             if datetime.utcnow() >= next_summary_time:
@@ -444,24 +443,22 @@ def main_loop():
 # ─── 15) LANCEMENT DU BOT ET DE LA BOUCLE PRINCIPALE ──────────────────────
 if __name__ == "__main__":
     import threading
+    import asyncio
 
-    # 1. Démarre la boucle principale du copytrade dans un thread séparé
+    # 1. On démarre la boucle principale dans un thread séparé
     thread_loop = threading.Thread(target=main_loop, daemon=True)
     thread_loop.start()
 
-    # 2. Lance l’application Telegram (commande /status)
+    # 2. Construction de l'application Telegram
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("status", status))
+    # → Si tu as d'autres handlers ("/trade", "MessageHandler", etc.), ajoute-les ici
 
-    # (Si tu as d’autres CommandHandler ou MessageHandler, ajoute-les ici :)
-    # application.add_handler(CommandHandler("trade", handle_trade))
-    # application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
+    # 3. Supprimer l’ancien webhook (pour éviter le conflit webhook/polling)
+    async def clear_webhook():
+        await application.bot.delete_webhook(drop_pending_updates=True)
 
-    # 3. Run polling → le bot reste actif en continu sur Render
-    import asyncio
+    asyncio.run(clear_webhook())
 
-async def clear_webhook():
-    await application.bot.delete_webhook(drop_pending_updates=True)
-
-asyncio.run(clear_webhook())
-application.run_polling()
+    # 4. Démarrer l’application Telegram en mode polling (le bot reste actif sur Render)
+    application.run_polling()
