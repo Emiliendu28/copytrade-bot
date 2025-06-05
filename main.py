@@ -21,8 +21,6 @@ load_dotenv()
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
 
-telegram_bot = Bot(token=TELEGRAM_TOKEN, request=HTTPXRequest())
-
 load_dotenv()
 
 PRIVATE_KEY       = os.getenv("PRIVATE_KEY")         # Clé privée (sans "0x")
@@ -61,8 +59,6 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         msg += "Aucune position ouverte actuellement."
     context.bot.send_message(chat_id=update.effective_chat.id, text=msg)
-
-dispatcher.add_handler(CommandHandler('status', status))
 
 def send_telegram(msg: str):
     try:
@@ -469,13 +465,13 @@ def main():
             time.sleep(60)
 
 if __name__ == "__main__":
+    import threading
     from telegram.ext import ApplicationBuilder, CommandHandler
 
+    # 1. Démarre la boucle principale du copytrade dans un thread séparé
+    threading.Thread(target=main).start()
+
+    # 2. Lance le bot Telegram (/status, etc.)
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler("status", status))  # ⬅️ Activation de la commande
-
-    # Démarre le bot Telegram
+    application.add_handler(CommandHandler("status", status))
     application.run_polling()
-
-    # Démarre le bot copytrade en parallèle
-    main()
