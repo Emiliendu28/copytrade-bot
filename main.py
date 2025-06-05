@@ -7,6 +7,9 @@ from decimal import Decimal
 from web3 import Web3
 from dotenv import load_dotenv
 from telegram import Bot
+from telegram.request import HTTPXRequest
+
+telegram_bot = Bot(token=TELEGRAM_TOKEN, request=HTTPXRequest())
 
 # ─── 1) CHARGEMENT DES VARIABLES D’ENVIRONNEMENT ─────────────────────────
 load_dotenv()
@@ -36,7 +39,7 @@ telegram_bot = Bot(token=TELEGRAM_TOKEN)
 
 def send_telegram(msg: str):
     try:
-        telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+        ttelegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, timeout=5)
     except Exception as e:
         print("Erreur Telegram :", e)
 
