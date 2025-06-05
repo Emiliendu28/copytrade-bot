@@ -1,4 +1,4 @@
-﻿import os
+import os
 import time
 import requests
 from datetime import datetime
@@ -7,6 +7,8 @@ from decimal import Decimal
 from web3 import Web3
 from dotenv import load_dotenv
 from telegram import Bot
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram.request import HTTPXRequest
 
 from telegram import Bot
@@ -43,10 +45,7 @@ if not w3.is_connected():
     raise ConnectionError("Impossible de se connecter à Infura.")
 
 # ─── 3) INITIALISATION DU BOT TELEGRAM ──────────────────────────────────
-telegram_bot = Bot(token=TELEGRAM_TOKEN)
-from telegram.ext import CommandHandler, Updater, CallbackContext
-updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
-dispatcher = updater.dispatcher
+application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 positions: list[dict] = []
 
@@ -408,6 +407,19 @@ def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
         print("Erreur HTTP Etherscan :", e)
         return []
 
+# ─── 14) COMMANDE /status POUR LE BOT TELEGRAM ─────────────────────────────
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    total_trades = len(positions)
+    invested = sum(p['entry_eth'] for p in positions)
+    msg = f"📊 Statut actuel du bot:\n\n"
+    msg += f"🔁 Positions ouvertes : {total_trades}\n💰 Investi : {invested:.6f} ETH\n"
+    if total_trades > 0:
+        for pos in positions:
+            msg += f"→ Token {pos['token']} | {pos['entry_eth']} ETH\n"
+    else:
+        msg += "Aucune position ouverte actuellement."
+    await update.message.reply_text(msg)
+
 # ─── 13) BOUCLE PRINCIPALE DU BOT ─────────────────────────────────────────────
 def main():
     trades_this_month = 0
@@ -456,4 +468,13 @@ def main():
             time.sleep(60)
 
 if __name__ == "__main__":
+    from telegram.ext import ApplicationBuilder, CommandHandler
+
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    application.add_handler(CommandHandler("status", status))  # ⬅️ Activation de la commande
+
+    # Démarre le bot Telegram
+    application.run_polling()
+
+    # Démarre le bot copytrade en parallèle
     main()
