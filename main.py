@@ -31,7 +31,7 @@ RAW_WALLET        = os.getenv("WALLET_ADDRESS", "").strip().lower()
 INFURA_URL        = os.getenv("INFURA_URL")
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY")
 
-# On vérifie que toutes les variables clés sont bien définies
+# Vérification basique
 for name, val in [
     ("TELEGRAM_TOKEN",    TELEGRAM_TOKEN),
     ("TELEGRAM_CHAT_ID",  TELEGRAM_CHAT_ID),
@@ -43,7 +43,7 @@ for name, val in [
     if not val:
         raise RuntimeError(f"ERREUR : la variable d’environnement {name} n’est pas définie !")
 
-# On normalise (checksum) l’adresse Ethereum du wallet
+# Normalisation (checksum) de l’adresse wallet
 try:
     WALLET_ADDRESS = Web3.to_checksum_address(RAW_WALLET)
 except Exception as e:
@@ -87,8 +87,8 @@ UNISWAP_ROUTER_ABI = [
     },
     {
         "inputs": [
-            {"internalType": "uint256", "name": "amountIn",     "type": "uint256"},
-            {"internalType": "address[]","name": "path",        "type": "address[]"},
+            {"internalType": "uint256",   "name": "amountIn",     "type": "uint256"},
+            {"internalType": "address[]", "name": "path",         "type": "address[]"},
         ],
         "name": "getAmountsOut",
         "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
@@ -129,21 +129,20 @@ WETH_ADDRESS = Web3.to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756
 # 3) PARAMÈTRES DE COPYTRADING (Whales, Budget, TP/SL)
 # ───────────────────────────────────────────────────────────────────────────────
 
-# Liste des whales à copier :
+# Liste des whales à copier (checksum)
 RAW_WHALES = [
     "0x4d2468bef1e33e17f7b017430ded6f7c169f7054",
     "0xdbf5e9c5206d0db70a90108bf936da60221dc080"
 ]
-# On normalise en checksum address :
 WHALES = [Web3.to_checksum_address(w.lower()) for w in RAW_WHALES]
 
 # On mémorise, pour chaque whale, le dernier bloc vérifié (initialement 0)
 last_processed_block = {whale: 0 for whale in WHALES}
 
-# Budget mensuel en EUR → on le convertit en ETH (approx)
+# Budget mensuel en EUR → on le convertit en ETH
 MONTHLY_BUDGET_EUR = Decimal("100")
-ETH_PRICE_USD      = Decimal("3500")   # vous pouvez actualiser
-EUR_USD_RATE       = Decimal("1.10")   # approx.
+ETH_PRICE_USD      = Decimal("3500")   # à ajuster si nécessaire
+EUR_USD_RATE       = Decimal("1.10")   # taux approximatif
 
 def eur_to_eth(eur_amount: Decimal) -> Decimal:
     usd_amount = eur_amount * EUR_USD_RATE
@@ -186,8 +185,8 @@ BOT = Bot(token=TELEGRAM_TOKEN)
 
 def safe_send(message: str):
     """
-    Envoie un message Telegram en créant à chaque fois un event loop isolé.
-    Ainsi, on évite les conflits d’event loop fermés par run_polling() de PTB v20.
+    Envoie un message Telegram en créant un event loop isolé à chaque fois.
+    Ainsi, on évite tout conflit avec le polling PTB v20.
     """
     try:
         loop = asyncio.new_event_loop()
@@ -201,7 +200,6 @@ def safe_send(message: str):
     except Exception as e:
         print(f"⚠️ safe_send(): {e}")
 
-
 def est_uniswap_swap_exact_eth_for_tokens(input_hex: str) -> bool:
     return input_hex.startswith("0x7ff36ab5")
 
@@ -210,26 +208,21 @@ def est_uniswap_swap_exact_tokens_for_eth(input_hex: str) -> bool:
 
 def extract_token_from_swap_eth_for_tokens(input_hex: str) -> str:
     """
-    Dans swapExactETHForTokens, le chemin (path) est encodé,
-    on récupère l’address du token (deuxième élément du path).
+    Dans swapExactETHForTokens, on récupère l’adresse du token (deuxième élément du chemin).
     """
-    # Offset = 4 bytes signature + 32 + 32 (amountOutMin + pathOffset)
     path_offset = 8 + 64 + 64
-    # Le path array commence ensuite → premier élément (WETH) puis le token
     token_start = 2 + path_offset + 64 + 24
     token_hex = input_hex[token_start : token_start + 40]
     return Web3.to_checksum_address("0x" + token_hex)
 
 def extract_token_from_swap_tokens_for_eth(input_hex: str) -> str:
     """
-    Dans swapExactTokensForETH, on récupère le premier élément du path (le token) qui va → WETH.
+    Dans swapExactTokensForETH, on récupère l’adresse du token mis en vente (premier élément du chemin).
     """
-    # Offset = 4 + 32 + 32 + 32 (sig + amountIn + amountOutMin + pathOffset)
     path_offset = 8 + 64 + 64 + 64
     token_start = 2 + path_offset + 64 + 24
     token_hex = input_hex[token_start : token_start + 40]
     return Web3.to_checksum_address("0x" + token_hex)
-
 
 def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
     """
@@ -252,13 +245,12 @@ def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
         print(f"⚠️ Etherscan API a renvoyé status={res.get('status')} / {res.get('message')}")
         return []
 
-
 def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
     """
-    Mirror BUY : on réalise un swapExactETHForTokens pour “eth_amount” ETH → “token_address”.
-    On stocke la position dans la liste globale “positions”.
+    Mirror BUY → swapExactETHForTokens de “eth_amount” ETH pour “token_address”.
+    On stocke ensuite la position dans “positions”.
     """
-    # 1) Vérifier qu’on a assez d’ETH
+    # 1) Vérifier solde ETH
     balance_wei = w3.eth.get_balance(WALLET_ADDRESS)
     balance_eth = w3.from_wei(balance_wei, "ether")
     if balance_eth < eth_amount:
@@ -268,7 +260,7 @@ def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
         )
         return None
 
-    # 2) Estimer la quantité de tokens (getAmountsOut)
+    # 2) Estimer quantité de tokens (getAmountsOut)
     path_buy = [WETH_ADDRESS, Web3.to_checksum_address(token_address)]
     amt_in_wei = w3.to_wei(eth_amount, "ether")
     try:
@@ -310,7 +302,7 @@ def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
         safe_send(f"Erreur send_raw_transaction (buy) → {e}")
         return None
 
-    # 5) On mémorise la position
+    # 5) Mémoriser la position
     positions.append({
         "token":            token_address,
         "token_amount_wei": token_amt_est_wei,
@@ -325,10 +317,9 @@ def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
     )
     return tx_hash
 
-
 def sell_all_token(token_address: str) -> str | None:
     """
-    Mirror SELL : on vend la totalité du token “token_address” détenu par le wallet.
+    Mirror SELL → vend toute la position “token_address” pour ETH.
     """
     token_address = Web3.to_checksum_address(token_address)
     token_contract = w3.eth.contract(address=token_address, abi=ERC20_ABI)
@@ -358,7 +349,7 @@ def sell_all_token(token_address: str) -> str | None:
         signed_approve = w3.eth.account.sign_transaction(approve_txn, private_key=PRIVATE_KEY)
         tx_approve = w3.eth.send_raw_transaction(signed_approve.raw_transaction).hex()
         safe_send(f"[APPROVE] Autorisation {token_address} → Router. TxHash: {tx_approve}")
-        # On attend la confirmation de l’approve
+        # On attend la confirmation de cet approve (quelques secondes)
         time.sleep(12)
     except Exception as e:
         safe_send(f"Erreur Approve (sell) → {e}")
@@ -398,11 +389,10 @@ def sell_all_token(token_address: str) -> str | None:
     )
     return tx_sell
 
-
 def check_positions_and_maybe_sell():
     """
-    Pour chaque position ouverte dans `positions`, on calcule sa valeur ETH actuelle.
-    Si la position a atteint TP (≥ +30 %) ou SL (≤ −15 %), on envoie la transaction de vente.
+    Pour chaque position dans `positions`, on calcule la valeur ETH actuelle.
+    Si on atteint TP (≥ +30 %) ou SL (≤ −15 %), on vend tout.
     """
     global positions
     nouvelles_positions: list[dict] = []
@@ -413,7 +403,6 @@ def check_positions_and_maybe_sell():
         entry_eth        = pos["entry_eth"]
         entry_ratio      = pos["entry_ratio"]
 
-        # call getAmountsOut(token → ETH)
         path_to_eth = [token_address, WETH_ADDRESS]
         try:
             amounts_out = router_contract.functions.getAmountsOut(
@@ -449,12 +438,10 @@ def check_positions_and_maybe_sell():
 
     positions = nouvelles_positions
 
-
 def process_whale_txns(whale: str):
     """
-    Récupère, pour cette whale, ses nouvelles txs ERC-20 depuis last_processed_block[whale].
-    Si on détecte swapExactETHForTokens → on appelle buy_token().
-    Si on détecte swapExactTokensForETH → on appelle sell_all_token().
+    Récupère pour cette whale ses nouvelles txs ERC-20 depuis last_processed_block[whale].
+    Si swapExactETHForTokens → on appelle buy_token(); si swapExactTokensForETH → sell_all_token().
     """
     global last_processed_block
 
@@ -466,7 +453,7 @@ def process_whale_txns(whale: str):
         input_hex    = tx.get("input", "")
         to_addr      = Web3.to_checksum_address(tx.get("to", "0x0"))
 
-        # On ne retient que les appels au Router Uniswap
+        # On garde uniquement les appels au Router Uniswap
         if to_addr.lower() != UNISWAP_ROUTER_ADDRESS.lower():
             continue
 
@@ -485,7 +472,6 @@ def process_whale_txns(whale: str):
         # Mise à jour du dernier bloc traité
         last_processed_block[whale] = block_number
 
-
 # ───────────────────────────────────────────────────────────────────────────────
 # 5) BOUCLE PRINCIPALE EN THREAD : copy-trading, TP/SL, résumé & heartbeat
 # ───────────────────────────────────────────────────────────────────────────────
@@ -494,7 +480,7 @@ def main_loop():
     trades_this_month = 0
     last_month_checked = datetime.utcnow().month
 
-    # Calcul du prochain résumé (« daily at 18h UTC »)
+    # Calcul du prochain résumé (daily at 18 h UTC)
     next_summary_time = datetime.utcnow().replace(
         hour=18, minute=0, second=0, microsecond=0
     )
@@ -507,28 +493,28 @@ def main_loop():
         try:
             now = datetime.utcnow()
 
-            # 1) Envoyer un « I’m alive » toutes les heures
+            # 1) Heartbeat toutes les heures
             if time.time() - main_loop.last_heartbeat > 3600:
                 safe_send(f"✅ Bot encore actif à {now.strftime('%Y-%m-%d %H:%M:%S')} UTC")
                 main_loop.last_heartbeat = time.time()
 
-            # 2) Si nouveau mois, on réinitialise le compteur de trades
+            # 2) Si nouveau mois, réinitialisation compteur trades
             if now.month != last_month_checked:
                 trades_this_month = 0
                 last_month_checked = now.month
 
-            # 3) Vérifier TP/SL sur les positions ouvertes
+            # 3) Vérifier TP/SL sur positions ouvertes
             check_positions_and_maybe_sell()
 
-            # 4) Pour chaque whale, on traite ses txs récentes
+            # 4) Pour chaque whale, traiter ses txs
             for whale_addr in WHALES:
                 process_whale_txns(whale_addr)
 
-            # 5) Envoyer un résumé quotidien à 18 h UTC
+            # 5) Résumé quotidien à 18 h UTC
             if now >= next_summary_time:
-                nb_positions   = len(positions)
-                trades_restants= MAX_TRADES_PER_MONTH - trades_this_month
-                eth_investi    = trades_this_month * ETH_PER_TRADE
+                nb_positions    = len(positions)
+                trades_restants = MAX_TRADES_PER_MONTH - trades_this_month
+                eth_investi     = trades_this_month * ETH_PER_TRADE
 
                 summary = (
                     f"🧾 Résumé quotidien ({now.strftime('%Y-%m-%d')}):\n"
@@ -549,14 +535,13 @@ def main_loop():
 # Initialisation du timestamp de heartbeat
 main_loop.last_heartbeat = 0.0
 
-
 # ───────────────────────────────────────────────────────────────────────────────
 # 6) HANDLERS TELEGRAM (Application PTB v20)
 # ───────────────────────────────────────────────────────────────────────────────
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /start → indique que le bot est bien en ligne.
+    /start → le bot indique qu’il est en ligne.
     """
     await update.message.reply_text(
         "🤖 Bot copytrade whales (Mirror + TP/SL) est maintenant en ligne.\n"
@@ -565,11 +550,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /status → renvoie nombre de positions ouvertes + total ETH investi.
+    /status → renvoie nb de positions ouvertes + total ETH investi.
     """
     total_positions = len(positions)
     invested_eth    = sum(pos["entry_eth"] for pos in positions)
-    msg = f"📊 Statut actuel du bot:\n\n"
+    msg = f"📊 Statut actuel du bot :\n\n"
     msg += f"🔁 Positions ouvertes : {total_positions}\n"
     msg += f"💰 Investi total      : {invested_eth:.6f} ETH\n\n"
     if total_positions > 0:
@@ -580,52 +565,49 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += "Pas de position ouverte pour l’instant."
     await update.message.reply_text(msg)
 
-
 # ───────────────────────────────────────────────────────────────────────────────
-# 7) FONCTION POUR LANCER LE POLLING PTB v20 DANS UN THREAD À PART
+# 7) LANCEMENT DU POLLING TELEGRAM DANS UN THREAD SANS HANDLER DE SIGNAUX
 # ───────────────────────────────────────────────────────────────────────────────
 
 def run_telegram_polling():
     """
-    Crée un event loop dédié, supprime tout webhook en attente, puis démarre run_polling().
-    Cette fonction est appelée dans un thread distinct.
+    Crée un event loop dédié, supprime tout webhook en attente, puis lance run_polling(stop_signals=None).
+    Ceci tourne dans un thread distinct, sans installer de gestionnaire de signaux.
     """
-    # 1) Nouveau event loop pour ce thread
+    # 1) Nouvel event loop pour ce thread
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    # 2) On reconstruit l’ApplicationBuilder
+    # 2) Reconstruction de l’Application PTB
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     # 3) Enregistrement des handlers
     application.add_handler(CommandHandler("start",  start_handler))
     application.add_handler(CommandHandler("status", status_handler))
 
-    # 4) On supprime tout webhook (et drop updates pendings) AVANT le polling
+    # 4) Supprimer tout webhook (drop pending updates)
     loop.run_until_complete(
         application.bot.delete_webhook(drop_pending_updates=True)
     )
 
-    # 5) On lance le polling (bloquant → ceci tourne dans ce thread uniquement)
-    application.run_polling()
-
+    # 5) Lancer run_polling en désactivant les signaux (dans ce thread non principal)
+    application.run_polling(stop_signals=None)
 
 # ───────────────────────────────────────────────────────────────────────────────
 # 8) DÉMARRAGE PRINCIPAL
 # ───────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # a) On lance la boucle copy-trading dans un thread “daemon”
+    # a) Thread “daemon” pour la boucle copy-trading
     thread_loop = threading.Thread(target=main_loop, daemon=True)
     thread_loop.start()
 
-    # b) On lance le polling Telegram dans un autre thread “daemon”
+    # b) Thread “daemon” pour le polling Telegram
     thread_tele = threading.Thread(target=run_telegram_polling, daemon=True)
     thread_tele.start()
 
-    # c) On empêche le main thread de se terminer (on attend indéfiniment)
+    # c) Empêche le main thread de se terminer
     threading.Event().wait()
-
 
 # ───────────────────────────────────────────────────────────────────────────────
 # FIN DE main.py
