@@ -13,12 +13,8 @@ from decimal import Decimal
 from web3 import Web3
 from dotenv import load_dotenv
 
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-)
+from telegram import Bot, Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # ───────────────────────────────────────────────────────────────────────────────
 # 1) VARIABLES D’ENVIRONNEMENT
@@ -49,6 +45,16 @@ except Exception as e:
     raise RuntimeError(f"Impossible de normaliser WALLET_ADDRESS (« {RAW_WALLET} ») : {e}")
 
 # ───────────────────────────────────────────────────────────────────────────────
+# 1b) SUPPRESSION DU WEBHOOK EXISTANT (pour éviter tout conflit getUpdates)
+# ───────────────────────────────────────────────────────────────────────────────
+_temp_bot = Bot(token=TELEGRAM_TOKEN)
+try:
+    _temp_bot.delete_webhook(drop_pending_updates=True)
+    print("✅ Webhook Telegram supprimé au démarrage")
+except Exception as e:
+    print(f"⚠️ Pas de webhook à supprimer au démarrage : {e}")
+
+# ───────────────────────────────────────────────────────────────────────────────
 # 2) INITIALISATION WEB3 + UNISWAP ROUTER
 # ───────────────────────────────────────────────────────────────────────────────
 w3 = Web3(Web3.HTTPProvider(INFURA_URL))
@@ -57,52 +63,51 @@ if not w3.is_connected():
 
 UNISWAP_ROUTER_ADDRESS = Web3.to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
 UNISWAP_ROUTER_ABI = [
-    {"inputs":[
-        {"internalType":"uint256","name":"amountOutMin","type":"uint256"},
-        {"internalType":"address[]","name":"path","type":"address[]"},
-        {"internalType":"address","name":"to","type":"address"},
-        {"internalType":"uint256","name":"deadline","type":"uint256"},
-     ],
-     "name":"swapExactETHForTokens",
-     "outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],
-     "stateMutability":"payable","type":"function"},
-    {"inputs":[
-        {"internalType":"uint256","name":"amountIn","type":"uint256"},
-        {"internalType":"uint256","name":"amountOutMin","type":"uint256"},
-        {"internalType":"address[]","name":"path","type":"address[]"},
-        {"internalType":"address","name":"to","type":"address"},
-        {"internalType":"uint256","name":"deadline","type":"uint256"},
-     ],
-     "name":"swapExactTokensForETH",
-     "outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],
-     "stateMutability":"nonpayable","type":"function"},
-    {"inputs":[
-        {"internalType":"uint256","name":"amountIn","type":"uint256"},
-        {"internalType":"address[]","name":"path","type":"address[]"},
-     ],
-     "name":"getAmountsOut",
-     "outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],
-     "stateMutability":"view","type":"function"},
+    {
+        "inputs":[
+            {"internalType":"uint256","name":"amountOutMin","type":"uint256"},
+            {"internalType":"address[]","name":"path","type":"address[]"},
+            {"internalType":"address","name":"to","type":"address"},
+            {"internalType":"uint256","name":"deadline","type":"uint256"},
+        ],
+        "name":"swapExactETHForTokens",
+        "outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],
+        "stateMutability":"payable","type":"function",
+    },
+    {
+        "inputs":[
+            {"internalType":"uint256","name":"amountIn","type":"uint256"},
+            {"internalType":"uint256","name":"amountOutMin","type":"uint256"},
+            {"internalType":"address[]","name":"path","type":"address[]"},
+            {"internalType":"address","name":"to","type":"address"},
+            {"internalType":"uint256","name":"deadline","type":"uint256"},
+        ],
+        "name":"swapExactTokensForETH",
+        "outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],
+        "stateMutability":"nonpayable","type":"function",
+    },
+    {
+        "inputs":[
+            {"internalType":"uint256","name":"amountIn","type":"uint256"},
+            {"internalType":"address[]","name":"path","type":"address[]"},
+        ],
+        "name":"getAmountsOut",
+        "outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],
+        "stateMutability":"view","type":"function",
+    }
 ]
 router_contract = w3.eth.contract(address=UNISWAP_ROUTER_ADDRESS, abi=UNISWAP_ROUTER_ABI)
 
 ERC20_ABI = [
     {
         "constant": False,
-        "inputs": [
-            {"name": "_spender", "type": "address"},
-            {"name": "_value",   "type": "uint256"},
-        ],
-        "name": "approve",
-        "outputs": [{"name": "", "type": "bool"}],
-        "type": "function",
+        "inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],
+        "name":"approve","outputs":[{"name":"","type":"bool"}],"type":"function",
     },
     {
         "constant": True,
-        "inputs": [{"name": "_owner", "type": "address"}],
-        "name": "balanceOf",
-        "outputs": [{"name": "balance", "type": "uint256"}],
-        "type": "function",
+        "inputs":[{"name":"_owner","type":"address"}],
+        "name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function",
     },
 ]
 
@@ -118,14 +123,13 @@ RAW_WHALES = [
 WHALES = [Web3.to_checksum_address(w.lower()) for w in RAW_WHALES]
 last_processed_block = {w: 0 for w in WHALES}
 
-# Budget mensuel ajusté à 10 €
+# Budget mensuel → 10 € (2 € par trade si 5 max)
 MONTHLY_BUDGET_EUR = Decimal("10")
 ETH_PRICE_USD      = Decimal("3500")
 EUR_USD_RATE       = Decimal("1.10")
 
 def eur_to_eth(eur: Decimal) -> Decimal:
-    usd = eur * EUR_USD_RATE
-    return (usd / ETH_PRICE_USD).quantize(Decimal("0.000001"))
+    return ((eur * EUR_USD_RATE) / ETH_PRICE_USD).quantize(Decimal("0.000001"))
 
 monthly_budget_eth   = eur_to_eth(MONTHLY_BUDGET_EUR)
 MAX_TRADES_PER_MONTH = 5
@@ -147,8 +151,8 @@ def send_http_request(url: str, timeout: int = 10) -> dict:
 
 def safe_send(message: str):
     """
-    Envoi Telegram via HTTP direct, sans passer par python-telegram-bot.
-    Évite tout conflit de getUpdates/webhook.
+    Envoi via Telegram HTTP API direct, sans python-telegram-bot.
+    Évite tout conflit getUpdates/webhook.
     """
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
@@ -183,41 +187,38 @@ def fetch_etherscan_txns(whale: str, start: int) -> list[dict]:
         return res.get("result", [])
     return []
 
-# ───────────────────────────────────────────────────────────────────────────────
-# Fonctions buy_token, sell_all_token, check_positions_and_maybe_sell,
-# process_whale_txns…  (les mêmes que précédemment, inchangées)
-# … (couve tes fonctions d’origine ici)
-# ───────────────────────────────────────────────────────────────────────────────
+# Fonctions buy_token, sell_all_token, check_positions_and_maybe_sell, process_whale_txns
+# … implémentation inchangée depuis la version précédente …
 
-def buy_token(token_address: str, eth_amount: Decimal) -> str | None:
-    # … implémentation identique à celle fournie plus haut
+def buy_token(token_address: str, eth_amount: Decimal) -> str|None:
+    # … même implémentation …
     pass
 
-def sell_all_token(token_address: str) -> str | None:
-    # … implémentation identique à celle fournie plus haut
+def sell_all_token(token_address: str) -> str|None:
+    # … même implémentation …
     pass
 
 def check_positions_and_maybe_sell():
-    # … idem
+    # … même implémentation …
     pass
 
 def process_whale_txns(whale: str):
-    # … idem
+    # … même implémentation …
     pass
 
 # ───────────────────────────────────────────────────────────────────────────────
 # 5) BOUCLE PRINCIPALE (copy-trade + TP/SL + résumé)
 # ───────────────────────────────────────────────────────────────────────────────
 def main_loop():
-    # … implémentation identique à celle fournie plus haut
+    # … même implémentation …
     pass
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 6) HANDLERS TELEGRAM pour polling
+# 6) HANDLERS TELEGRAM & POLLING
 # ───────────────────────────────────────────────────────────────────────────────
 async def start_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 Bot copytrade whales est maintenant en ligne.\nTapez /status pour voir le statut."
+        "🤖 Bot copytrade whales est en ligne.\nTapez /status pour le statut."
     )
 
 async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -242,21 +243,16 @@ def run_telegram_polling():
     app.add_handler(CommandHandler("start",  start_handler))
     app.add_handler(CommandHandler("status", status_handler))
 
-    # Supprime le webhook et purge les anciennes sessions getUpdates
-    loop.run_until_complete(
-        app.bot.delete_webhook(drop_pending_updates=True)
-    )
-
-    # Démarre le polling en dropant tout update précédent
+    # Lancement du polling (drop des anciens updates)
     app.run_polling(stop_signals=None, drop_pending_updates=True)
 
 # ───────────────────────────────────────────────────────────────────────────────
 # 7) DÉMARRAGE
 # ───────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # 1) Thread pour le copy-trading en arrière-plan
+    # 1) Thread de copy-trade
     threading.Thread(target=main_loop, daemon=True).start()
-    # 2) Thread pour le polling Telegram
+    # 2) Thread Telegram polling
     threading.Thread(target=run_telegram_polling, daemon=True).start()
-    # 3) Empêche le process principal de se terminer
+    # 3) Bloque le process principal
     threading.Event().wait()
