@@ -118,11 +118,14 @@ WETH_ADDRESS = Web3.to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756
 # ───────────────────────────────────────────────────────────────────────────────
 # 3) COPY-TRADING & BUDGET
 # ───────────────────────────────────────────────────────────────────────────────
+# Deux wallets Smart-Money actifs et performants
 RAW_WHALES = [
-    "0x4d2468bef1e33e17f7b017430ded6f7c169f7054",
-    "0xdbf5e9c5206d0db70a90108bf936da60221dc080",
+    "0xdf89a69a6a6d3df7d823076e0124a222538c5133",
+    "0x858da48232ea6731f22573dc711c0cc415c334c5",
 ]
 WHALES = [Web3.to_checksum_address(w.lower()) for w in RAW_WHALES]
+
+# on réinitialise aussi le suivi des blocks
 last_processed_block = {w: 0 for w in WHALES}
 
 # — Budget mensuel ajusté à 10 €
