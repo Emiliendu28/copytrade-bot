@@ -125,6 +125,11 @@ WETH_ADDRESS = Web3.to_checksum_address(
 # 3) COPY-TRADING & BUDGET
 # ───────────────────────────────────────────────────────────────────────────────
 RAW_WHALES = [
+    # Hot wallets d’échange (beaucoup de volume)
+    "0x28C6c06298d514Db089934071355E5743bf21d60",  # Binance hot wallet
+    "0xf977814e90da44bfa03b6295a0616a897441acec",  # Huobi hot wallet
+
+    # Whales privées plus opportunistes
     "0xdf89a69a6a6d3df7d823076e0124a222538c5133",
     "0x858da48232ea6731f22573dc711c0cc415c334c5",
 ]
