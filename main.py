@@ -43,10 +43,10 @@ ERC20_ABI = [ … same as before … ]
 
 # ─── 3) COPY-TRADING & BUDGET ─────────────────────────────────────────────────
 RAW = [
-    "0xdf8efb8a522561ea9bd8c55874dca4536ee5c618",  # Smart Dex Trader
-    "0x6e90ae41af1dea6f0006aa7752d9db2cf5e6a49f",  # Smart Dex Trader
-    "0xdf89a69a6a6d3df7d823076e0124a222538c5133",  # Private whale
-    "0x858da48232ea6731f22573dc711c0cc415c334c5",  # Private whale
+    "0x9E60A105c3D8DCb87fd10277cB2765439a7935f3",  # Smart Dex Trader
+    "0x3b7443Cc9a4E4C4cE435B873F4e1dDe36929ce71",  # Smart Dex Trader
+    "0x3004892CF2946356e8e4570A94748afDFF86681C",  # Private whale
+    "0x000461A73d3985eef4923655782aA5d0De75C111",  # Private whale
 ]
 WHALES = [Web3.to_checksum_address(w) for w in RAW]
 last_block = {w: 0 for w in WHALES}
