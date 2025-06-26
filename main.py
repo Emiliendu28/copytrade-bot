@@ -319,21 +319,21 @@ async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 # ───────────────────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────────────────────────────────────
 # 8) LANCEMENT
 # ───────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # 1) Construction de l'application
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # 1) Supprimer webhook existant
-    asyncio.run(app.bot.delete_webhook(drop_pending_updates=True))
-
-    # 2) Enregistrer handlers
+    # 2) Enregistrement des handlers
     app.add_handler(CommandHandler("start",  start_handler))
     app.add_handler(CommandHandler("status", status_handler))
 
-    # 3) Planifier jobs sur l'job_queue intégrée
+    # 3) Planification des jobs via l'job_queue intégrée
     app.job_queue.run_repeating(copytrade_task, interval=30, first=5)
     app.job_queue.run_daily(daily_summary, time=dt_time(hour=18, minute=0))
 
-    # 4) Démarrer polling (unique)
+    # 4) Démarrage du polling en supprimant les anciennes mises à jour en attente
+    # (delete_webhook est géré par drop_pending_updates)
     app.run_polling(drop_pending_updates=True)
