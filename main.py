@@ -13,7 +13,6 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
-    JobQueue
 )
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -132,10 +131,8 @@ MONTHLY_BUDGET_EUR = Decimal("10")
 ETH_PRICE_USD      = Decimal("3500")
 EUR_USD_RATE       = Decimal("1.10")
 
-
 def eur_to_eth(eur: Decimal) -> Decimal:
-    usd = eur * EUR_USD_RATE
-    return (usd / ETH_PRICE_USD).quantize(Decimal("0.000001"))
+    return ((eur * EUR_USD_RATE) / ETH_PRICE_USD).quantize(Decimal("0.000001"))
 
 monthly_budget_eth   = eur_to_eth(MONTHLY_BUDGET_EUR)
 MAX_TRADES_PER_MONTH = 5
@@ -181,12 +178,12 @@ def is_sell(hex_in: str) -> bool:
 
 
 def extract_token_from_buy(hex_in: str) -> str:
-    base = 2 + (8 + 64 + 64) + 64 + 24
+    base = 2 + (8+64+64) + 64 + 24
     return Web3.to_checksum_address("0x" + hex_in[base:base+40])
 
 
 def extract_token_from_sell(hex_in: str) -> str:
-    base = 2 + (8 + 64 + 64 + 64) + 64 + 24
+    base = 2 + (8+64+64+64) + 64 + 24
     return Web3.to_checksum_address("0x" + hex_in[base:base+40])
 
 
@@ -208,11 +205,11 @@ def buy_token(token_address: str, eth_amount: Decimal) -> None:
     txn = router.functions.swapExactETHForTokens(
         0, path, WALLET_ADDRESS, deadline
     ).build_transaction({
-        "from":     WALLET_ADDRESS,
-        "value":    amt_wei,
-        "gas":      300_000,
+        "from": WALLET_ADDRESS,
+        "value": amt_wei,
+        "gas": 300_000,
         "gasPrice": w3.to_wei("30", "gwei"),
-        "nonce":    nonce,
+        "nonce": nonce,
     })
     signed = w3.eth.account.sign_transaction(txn, PRIVATE_KEY)
     w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -226,10 +223,10 @@ def sell_all_token(token_address: str) -> None:
 
     nonce = w3.eth.get_transaction_count(WALLET_ADDRESS)
     ap = token.functions.approve(UNISWAP_ROUTER_ADDRESS, bal).build_transaction({
-        "from":     WALLET_ADDRESS,
-        "gas":      100_000,
+        "from": WALLET_ADDRESS,
+        "gas": 100_000,
         "gasPrice": w3.to_wei("30", "gwei"),
-        "nonce":    nonce,
+        "nonce": nonce,
     })
     sap = w3.eth.account.sign_transaction(ap, PRIVATE_KEY)
     w3.eth.send_raw_transaction(sap.raw_transaction)
@@ -241,10 +238,10 @@ def sell_all_token(token_address: str) -> None:
     stx = router.functions.swapExactTokensForETH(
         bal, 0, path, WALLET_ADDRESS, deadline
     ).build_transaction({
-        "from":     WALLET_ADDRESS,
-        "gas":      300_000,
+        "from": WALLET_ADDRESS,
+        "gas": 300_000,
         "gasPrice": w3.to_wei("30", "gwei"),
-        "nonce":    nonce2,
+        "nonce": nonce2,
     })
     sstx = w3.eth.account.sign_transaction(stx, PRIVATE_KEY)
     w3.eth.send_raw_transaction(sstx.raw_transaction)
@@ -255,7 +252,6 @@ def sell_all_token(token_address: str) -> None:
 async def copytrade_task(ctx: ContextTypes.DEFAULT_TYPE):
     new_positions = []
     for pos in positions:
-        out = None
         try:
             out = router.functions.getAmountsOut(
                 pos["token_amount_wei"], [pos["token"], WETH_ADDRESS]
@@ -335,12 +331,9 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start",  start_handler))
     app.add_handler(CommandHandler("status", status_handler))
 
-    # 3) Instancier JobQueue et planifier tâches
-    jq = JobQueue()
-    jq.set_dispatcher(app)
-    jq.run_repeating(copytrade_task, interval=30, first=5)
-    jq.run_daily(daily_summary, time=dt_time(hour=18, minute=0))
-    jq.start()
+    # 3) Planifier jobs sur l'job_queue intégrée
+    app.job_queue.run_repeating(copytrade_task, interval=30, first=5)
+    app.job_queue.run_daily(daily_summary, time=dt_time(hour=18, minute=0))
 
     # 4) Démarrer polling (unique)
     app.run_polling(drop_pending_updates=True)
