@@ -125,14 +125,13 @@ WETH_ADDRESS = Web3.to_checksum_address(
 # 3) COPY-TRADING & BUDGET
 # ───────────────────────────────────────────────────────────────────────────────
 RAW_WHALES = [
-    # Hot wallets d’échange (beaucoup de volume)
-    "0x28C6c06298d514Db089934071355E5743bf21d60",  # Binance hot wallet
-    "0xf977814e90da44bfa03b6295a0616a897441acec",  # Huobi hot wallet
-
-    # Whales privées plus opportunistes
+    "0xdf8efb8a522561ea9bd8c55874dca4536ee5c618",
+    "0x6e90ae41af1dea6f0006aa7752d9db2cf5e6a49f",
+    # tes deux whales privées existantes si tu veux garder 4 adresses
     "0xdf89a69a6a6d3df7d823076e0124a222538c5133",
     "0x858da48232ea6731f22573dc711c0cc415c334c5",
 ]
+
 WHALES = [Web3.to_checksum_address(w) for w in RAW_WHALES]
 last_processed_block = {w: 0 for w in WHALES}
 
