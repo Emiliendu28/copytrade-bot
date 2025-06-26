@@ -13,6 +13,7 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
+    JobQueue
 )
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -56,9 +57,9 @@ UNISWAP_ROUTER_ABI = [
     {
         "inputs": [
             {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
-            {"internalType": "address[]", "name": "path",         "type": "address[]"},
-            {"internalType": "address",   "name": "to",           "type": "address"},
-            {"internalType": "uint256",   "name": "deadline",     "type": "uint256"},
+            {"internalType": "address[]", "name": "path", "type": "address[]"},
+            {"internalType": "address", "name": "to", "type": "address"},
+            {"internalType": "uint256", "name": "deadline", "type": "uint256"},
         ],
         "name": "swapExactETHForTokens",
         "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
@@ -67,27 +68,27 @@ UNISWAP_ROUTER_ABI = [
     },
     {
         "inputs": [
-            {"internalType": "uint256", "name": "amountIn",     "type": "uint256"},
+            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
             {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
-            {"internalType": "address[]","name": "path",         "type": "address[]"},
-            {"internalType": "address",  "name": "to",           "type": "address"},
-            {"internalType": "uint256",  "name": "deadline",     "type": "uint256"},
+            {"internalType": "address[]", "name": "path", "type": "address[]"},
+            {"internalType": "address", "name": "to", "type": "address"},
+            {"internalType": "uint256", "name": "deadline", "type": "uint256"},
         ],
         "name": "swapExactTokensForETH",
-        "outputs": [{"internalType": "uint256[]","name": "amounts","type": "uint256[]"}],
+        "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
         "stateMutability": "nonpayable",
         "type": "function",
     },
     {
         "inputs": [
             {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
-            {"internalType": "address[]","name": "path",     "type": "address[]"},
+            {"internalType": "address[]", "name": "path", "type": "address[]"},
         ],
         "name": "getAmountsOut",
-        "outputs": [{"internalType": "uint256[]","name": "amounts","type": "uint256[]"}],
+        "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
         "stateMutability": "view",
         "type": "function",
-    }
+    },
 ]
 router = w3.eth.contract(address=UNISWAP_ROUTER_ADDRESS, abi=UNISWAP_ROUTER_ABI)
 
@@ -130,6 +131,8 @@ last_processed_block = {w: 0 for w in WHALES}
 MONTHLY_BUDGET_EUR = Decimal("10")
 ETH_PRICE_USD      = Decimal("3500")
 EUR_USD_RATE       = Decimal("1.10")
+
+
 def eur_to_eth(eur: Decimal) -> Decimal:
     usd = eur * EUR_USD_RATE
     return (usd / ETH_PRICE_USD).quantize(Decimal("0.000001"))
@@ -137,14 +140,15 @@ def eur_to_eth(eur: Decimal) -> Decimal:
 monthly_budget_eth   = eur_to_eth(MONTHLY_BUDGET_EUR)
 MAX_TRADES_PER_MONTH = 5
 ETH_PER_TRADE        = (monthly_budget_eth / MAX_TRADES_PER_MONTH).quantize(Decimal("0.000001"))
-TP_THRESHOLD = Decimal("0.30")  # +30%
-SL_THRESHOLD = Decimal("0.15")  # −15%
+TP_THRESHOLD = Decimal("0.30")
+SL_THRESHOLD = Decimal("0.15")
 
 positions: list[dict] = []
 
 # ───────────────────────────────────────────────────────────────────────────────
 # 4) UTILITAIRES
 # ───────────────────────────────────────────────────────────────────────────────
+
 def send_http_request(url: str, timeout: int = 10) -> dict:
     try:
         return requests.get(url, timeout=timeout).json()
@@ -152,8 +156,8 @@ def send_http_request(url: str, timeout: int = 10) -> dict:
         return {}
 
 async def safe_send(app, text: str):
-    """Envoi via le même bot (pas de second polling)."""
     await app.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text)
+
 
 def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
     url = (
@@ -167,24 +171,28 @@ def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
         return res["result"]
     return []
 
-def is_buy(input_hex: str) -> bool:
-    return input_hex.startswith("0x7ff36ab5")
 
-def is_sell(input_hex: str) -> bool:
-    return input_hex.startswith("0x18cbafe5")
+def is_buy(hex_in: str) -> bool:
+    return hex_in.startswith("0x7ff36ab5")
 
-def extract_token_from_buy(input_hex: str) -> str:
+
+def is_sell(hex_in: str) -> bool:
+    return hex_in.startswith("0x18cbafe5")
+
+
+def extract_token_from_buy(hex_in: str) -> str:
     base = 2 + (8 + 64 + 64) + 64 + 24
-    return Web3.to_checksum_address("0x" + input_hex[base:base+40])
+    return Web3.to_checksum_address("0x" + hex_in[base:base+40])
 
-def extract_token_from_sell(input_hex: str) -> str:
+
+def extract_token_from_sell(hex_in: str) -> str:
     base = 2 + (8 + 64 + 64 + 64) + 64 + 24
-    return Web3.to_checksum_address("0x" + input_hex[base:base+40])
+    return Web3.to_checksum_address("0x" + hex_in[base:base+40])
+
 
 def buy_token(token_address: str, eth_amount: Decimal) -> None:
     balance = w3.from_wei(w3.eth.get_balance(WALLET_ADDRESS), "ether")
     if balance < eth_amount:
-        # pas assez d'ETH
         return
 
     amt_wei = w3.to_wei(eth_amount, "ether")
@@ -195,7 +203,6 @@ def buy_token(token_address: str, eth_amount: Decimal) -> None:
         return
     token_est_wei = out[1]
 
-    # build tx
     deadline = int(time.time()) + 300
     nonce = w3.eth.get_transaction_count(WALLET_ADDRESS)
     txn = router.functions.swapExactETHForTokens(
@@ -208,14 +215,8 @@ def buy_token(token_address: str, eth_amount: Decimal) -> None:
         "nonce":    nonce,
     })
     signed = w3.eth.account.sign_transaction(txn, PRIVATE_KEY)
-    txh = w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+    w3.eth.send_raw_transaction(signed.raw_transaction)
 
-    positions.append({
-        "token":            token_address,
-        "token_amount_wei": token_est_wei,
-        "entry_eth":        eth_amount,
-        "entry_ratio":      (eth_amount / (Decimal(token_est_wei) / Decimal(10**18))).quantize(Decimal("0.000000000001")),
-    })
 
 def sell_all_token(token_address: str) -> None:
     token = w3.eth.contract(address=token_address, abi=ERC20_ABI)
@@ -223,7 +224,6 @@ def sell_all_token(token_address: str) -> None:
     if bal == 0:
         return
 
-    # Approve
     nonce = w3.eth.get_transaction_count(WALLET_ADDRESS)
     ap = token.functions.approve(UNISWAP_ROUTER_ADDRESS, bal).build_transaction({
         "from":     WALLET_ADDRESS,
@@ -235,7 +235,6 @@ def sell_all_token(token_address: str) -> None:
     w3.eth.send_raw_transaction(sap.raw_transaction)
     time.sleep(12)
 
-    # Swap
     path = [token_address, WETH_ADDRESS]
     deadline = int(time.time()) + 300
     nonce2 = w3.eth.get_transaction_count(WALLET_ADDRESS)
@@ -254,18 +253,18 @@ def sell_all_token(token_address: str) -> None:
 # 5) TÂCHE RÉPÉTÉE copy-trade + TP/SL
 # ───────────────────────────────────────────────────────────────────────────────
 async def copytrade_task(ctx: ContextTypes.DEFAULT_TYPE):
-    # TP/SL
     new_positions = []
     for pos in positions:
-        amt_wei = pos["token_amount_wei"]
-        entry   = pos["entry_eth"]
+        out = None
         try:
-            out = router.functions.getAmountsOut(amt_wei, [pos["token"], WETH_ADDRESS]).call()
+            out = router.functions.getAmountsOut(
+                pos["token_amount_wei"], [pos["token"], WETH_ADDRESS]
+            ).call()
         except:
             new_positions.append(pos)
             continue
-
         cur_eth = Decimal(out[1]) / Decimal(10**18)
+        entry   = pos["entry_eth"]
         ratio   = (cur_eth / entry).quantize(Decimal("0.0001"))
         if ratio >= (Decimal("1.0") + TP_THRESHOLD):
             await safe_send(ctx.application, f"✅ TAKE-PROFIT → {pos['token']} | {cur_eth:.6f} ETH (+{(ratio-1)*100:.1f}%)")
@@ -277,7 +276,6 @@ async def copytrade_task(ctx: ContextTypes.DEFAULT_TYPE):
             new_positions.append(pos)
     positions[:] = new_positions
 
-    # Copy-trade
     for whale in WHALES:
         txs = fetch_etherscan_txns(whale, last_processed_block[whale])
         for tx in txs:
@@ -286,7 +284,6 @@ async def copytrade_task(ctx: ContextTypes.DEFAULT_TYPE):
             to  = Web3.to_checksum_address(tx.get("to", "0x0"))
             if to.lower() != UNISWAP_ROUTER_ADDRESS.lower():
                 continue
-
             if is_buy(inp):
                 token = extract_token_from_buy(inp)
                 await safe_send(ctx.application, f"👀 Whale {whale[:8]}… → BUY détecté ({token})")
@@ -295,7 +292,6 @@ async def copytrade_task(ctx: ContextTypes.DEFAULT_TYPE):
                 token = extract_token_from_sell(inp)
                 await safe_send(ctx.application, f"👀 Whale {whale[:8]}… → SELL détecté ({token})")
                 sell_all_token(token)
-
             last_processed_block[whale] = blk
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -315,7 +311,7 @@ async def daily_summary(ctx: ContextTypes.DEFAULT_TYPE):
 # 7) HANDLERS TELEGRAM
 # ───────────────────────────────────────────────────────────────────────────────
 async def start_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot copytrade whales en ligne.\nTapez /status")
+    await update.message.reply_text("🤖 Bot copytrade whales en ligne. Tapez /status")
 
 async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     invested = sum(pos["entry_eth"] for pos in positions)
@@ -332,18 +328,19 @@ async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Supprimer tout webhook existant
+    # 1) Supprimer webhook existant
     asyncio.run(app.bot.delete_webhook(drop_pending_updates=True))
 
-    # Enregistrer les handlers
+    # 2) Enregistrer handlers
     app.add_handler(CommandHandler("start",  start_handler))
     app.add_handler(CommandHandler("status", status_handler))
 
-    # Job répété toutes les 30 s pour copy-trade + TP/SL
-    app.job_queue.run_repeating(copytrade_task, interval=30, first=5)
+    # 3) Instancier JobQueue et planifier tâches
+    jq = JobQueue()
+    jq.set_dispatcher(app)
+    jq.run_repeating(copytrade_task, interval=30, first=5)
+    jq.run_daily(daily_summary, time=dt_time(hour=18, minute=0))
+    jq.start()
 
-    # Job quotidien à 18 h UTC pour résumé
-    app.job_queue.run_daily(daily_summary, time=dt_time(hour=18, minute=0))
-
-    # Démarrer le polling (unique)
+    # 4) Démarrer polling (unique)
     app.run_polling(drop_pending_updates=True)
