@@ -42,7 +42,7 @@ except Exception as e:
     raise RuntimeError(f"Adresse wallet invalide : {e}")
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 2) WEB3 + ROUTER UNISWAP V2
+# 2) INITIALISATION WEB3 + ROUTER UNISWAP V2
 # ───────────────────────────────────────────────────────────────────────────────
 w3 = Web3(Web3.HTTPProvider(INFURA_URL))
 if not w3.is_connected():
@@ -52,12 +52,48 @@ UNISWAP_ROUTER_ADDRESS = Web3.to_checksum_address(
     "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"
 )
 UNISWAP_ROUTER_ABI = [
-    # ... (même ABI que précédemment pour swapExactETHForTokens, swapExactTokensForETH, getAmountsOut)
+    # ABI minimal pour swapExactETHForTokens, swapExactTokensForETH, getAmountsOut
+    {
+        "inputs": [
+            {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
+            {"internalType": "address[]", "name": "path", "type": "address[]"},
+            {"internalType": "address", "name": "to", "type": "address"},
+            {"internalType": "uint256", "name": "deadline", "type": "uint256"},
+        ],
+        "name": "swapExactETHForTokens",
+        "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
+        "stateMutability": "payable",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+            {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
+            {"internalType": "address[]", "name": "path", "type": "address[]"},
+            {"internalType": "address", "name": "to", "type": "address"},
+            {"internalType": "uint256", "name": "deadline", "type": "uint256"},
+        ],
+        "name": "swapExactTokensForETH",
+        "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+            {"internalType": "address[]", "name": "path", "type": "address[]"},
+        ],
+        "name": "getAmountsOut",
+        "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
 ]
 router = w3.eth.contract(address=UNISWAP_ROUTER_ADDRESS, abi=UNISWAP_ROUTER_ABI)
 
 ERC20_ABI = [
-    # ... (approve + balanceOf)
+    {"constant": False, "inputs": [{"name": "_spender", "type": "address"}, {"name": "_value", "type": "uint256"}], "name": "approve", "outputs": [{"name": "", "type": "bool"}], "type": "function"},
+    {"constant": True, "inputs": [{"name": "_owner", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "balance", "type": "uint256"}], "type": "function"},
 ]
 
 WETH_ADDRESS = Web3.to_checksum_address(
@@ -65,7 +101,7 @@ WETH_ADDRESS = Web3.to_checksum_address(
 )
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 3) WHALES, BUDGET & TP/SL
+# 3) COPY-TRADING & BUDGET
 # ───────────────────────────────────────────────────────────────────────────────
 RAW_WHALES = [
     "0x9E60A105c3D8DCb87fd10277cB2765439a7935f3",
@@ -79,6 +115,7 @@ last_processed_block = {w: 0 for w in WHALES}
 MONTHLY_BUDGET_EUR = Decimal("10")
 ETH_PRICE_USD      = Decimal("3500")
 EUR_USD_RATE       = Decimal("1.10")
+
 
 def eur_to_eth(eur: Decimal) -> Decimal:
     return ((eur * EUR_USD_RATE) / ETH_PRICE_USD).quantize(Decimal("0.000001"))
@@ -94,6 +131,7 @@ positions: list[dict] = []
 # ───────────────────────────────────────────────────────────────────────────────
 # 4) UTILITAIRES
 # ───────────────────────────────────────────────────────────────────────────────
+
 def send_http_request(url: str, timeout: int = 10) -> dict:
     try:
         return requests.get(url, timeout=timeout).json()
@@ -105,12 +143,12 @@ async def safe_send(app, text: str):
 
 def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
     """
-    Récupère toutes les tx normales (txlist) pour l’adresse “whale” depuis “start_block”.
+    Récupère toutes les tx normales (txlist) pour l’adresse “whale” depuis "start_block".
     """
     url = (
         "https://api.etherscan.io/api"
         f"?module=account"
-        f"&action=txlist"                     # <-- on passe à txlist !
+        f"&action=txlist"
         f"&address={whale}"
         f"&startblock={start_block}&endblock=latest"
         f"&sort=asc"
@@ -137,24 +175,30 @@ def extract_token_from_sell(hex_in: str) -> str:
     base = 2 + (8+64+64+64) + 64 + 24
     return Web3.to_checksum_address("0x" + hex_in[base:base+40])
 
-# (les fonctions buy_token() et sell_all_token() restent inchangées)
+# ... (fonctions buy_token et sell_all_token identiques)
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 5) JOB : copy-trade + TP/SL
+# 5) JOB : copytrade_task
 # ───────────────────────────────────────────────────────────────────────────────
 async def copytrade_task(ctx: ContextTypes.DEFAULT_TYPE):
-    # 1) TP/SL sur positions existantes
-    # 2) Pour chaque whale, fetch txlist, filtre router & input, buy_token / sell_all_token
-    # (logique identique à celle que tu as déjà)
+    # TP/SL puis fetch txlist, filtre router & input, copy trade
+    pass
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 6) JOB : résumé quotidien à 18h UTC
+# 6) JOB : daily_summary
 # ───────────────────────────────────────────────────────────────────────────────
 async def daily_summary(ctx: ContextTypes.DEFAULT_TYPE):
-    # idem
+    now = datetime.utcnow()
+    invested = sum(pos["entry_eth"] for pos in positions)
+    txt = (
+        f"🧾 Résumé {now:%Y-%m-%d}:\n"
+        f"• Positions ouvertes : {len(positions)}\n"
+        f"• Investi total      : {invested:.6f} ETH"
+    )
+    await safe_send(ctx.application, txt)
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 7) Handlers /start & /status
+# 7) HANDLERS TELEGRAM
 # ───────────────────────────────────────────────────────────────────────────────
 async def start_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Bot copytrade whales en ligne. Tapez /status")
@@ -169,18 +213,15 @@ async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 8) DÉMARRAGE UNIQUE
+# 8) LANCEMENT
 # ───────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Enregistre handlers
     app.add_handler(CommandHandler("start",  start_handler))
     app.add_handler(CommandHandler("status", status_handler))
 
-    # Programme les tâches
     app.job_queue.run_repeating(copytrade_task, interval=30, first=5)
     app.job_queue.run_daily(daily_summary, time=dt_time(hour=18, minute=0))
 
-    # Démarre un seul polling, en dropant les anciennes mises à jour
     app.run_polling(drop_pending_updates=True)
