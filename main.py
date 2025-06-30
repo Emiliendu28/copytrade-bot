@@ -157,16 +157,24 @@ async def safe_send(app, text: str):
 
 
 def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
+    """
+    Récupère toutes les tx normales (txlist) pour l’adresse “whale” depuis “start_block” (inclus).
+    """
     url = (
         "https://api.etherscan.io/api"
-        f"?module=account&action=tokentx"
-        f"&address={whale}&startblock={start_block}&endblock=latest"
-        f"&sort=asc&apikey={ETHERSCAN_API_KEY}"
+        f"?module=account"
+        f"&action=txlist"                     # on utilise txlist pour obtenir le champ `input`
+        f"&address={whale}"
+        f"&startblock={start_block}&endblock=latest"
+        f"&sort=asc"
+        f"&apikey={ETHERSCAN_API_KEY}"
     )
     res = send_http_request(url)
     if res.get("status") == "1" and res.get("message") == "OK":
-        return res["result"]
-    return []
+        return res.get("result", [])
+    else:
+        print(f"⚠️ Etherscan API txlist status={res.get('status')} message={res.get('message')}")
+        return []
 
 
 def is_buy(hex_in: str) -> bool:
