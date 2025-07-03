@@ -48,8 +48,8 @@ w3 = Web3(Web3.HTTPProvider(INFURA_URL))
 if not w3.is_connected():
     raise ConnectionError("❌ Échec connexion Infura")
 
-print("✅ Variables chargées")
-print("✅ Web3 connecté")
+print("✅ Variables chargées", flush=True)
+print("✅ Web3 connecté"    , flush=True)
 
 # ───────────────────────────────────────────────────────────────────────────────
 # 2) Uniswap V2 Router
@@ -108,7 +108,7 @@ RAW_WHALES = [
 ]
 WHALES = [Web3.to_checksum_address(w) for w in RAW_WHALES]
 last_processed_block = {w: 0 for w in WHALES}
-print(f"✅ Whales suivies : {len(WHALES)}")
+print(f"✅ Whales suivies : {len(WHALES)}", flush=True)
 
 MONTHLY_BUDGET_EUR = Decimal("10")
 ETH_PRICE_USD      = Decimal("3500")
@@ -297,6 +297,7 @@ async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # 8) LANCEMENT
 # ───────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    print("▶️ Démarrage du bot…", flush=True)
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start",  start_handler))
     app.add_handler(CommandHandler("status", status_handler))
