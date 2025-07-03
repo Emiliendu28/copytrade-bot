@@ -1,8 +1,9 @@
 import os
 import time
 import requests
+import asyncio
 from decimal import Decimal
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timedelta
 
 from web3 import Web3
 from dotenv import load_dotenv
@@ -21,7 +22,7 @@ load_dotenv()
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
 PRIVATE_KEY       = os.getenv("PRIVATE_KEY")
-RAW_WALLET        = os.getenv("WALLET_ADDRESS", "").strip().lower()
+RAW_WALLET        = os.getenv("WALLET_ADDRESS", "").strip()
 INFURA_URL        = os.getenv("INFURA_URL")
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY")
 
@@ -34,35 +35,37 @@ for name, val in [
     ("ETHERSCAN_API_KEY", ETHERSCAN_API_KEY),
 ]:
     if not val:
-        raise RuntimeError(f"ERREUR : la variable d’environnement {name} n’est pas définie !")
+        raise RuntimeError(f"❌ La variable d’environnement {name} n’est pas définie !")
 
 try:
     WALLET_ADDRESS = Web3.to_checksum_address(RAW_WALLET)
 except Exception as e:
-    raise RuntimeError(f"Adresse wallet invalide : {e}")
+    raise RuntimeError(f"❌ Adresse wallet invalide : {e}")
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 2) INITIALISATION WEB3 + ROUTER UNISWAP V2
+# 2) WEB3 + UNISWAP V2 ROUTER
 # ───────────────────────────────────────────────────────────────────────────────
 w3 = Web3(Web3.HTTPProvider(INFURA_URL))
 if not w3.is_connected():
-    raise ConnectionError("Impossible de se connecter à INFURA_URL !")
+    raise ConnectionError("❌ Impossible de se connecter à INFURA !")
 
 UNISWAP_ROUTER_ADDRESS = Web3.to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
 UNISWAP_ROUTER_ABI = [
+    # swapExactETHForTokens
     {
-        "inputs": [
-            {"internalType": "uint256","name": "amountOutMin","type": "uint256"},
-            {"internalType": "address[]","name": "path","type": "address[]"},
-            {"internalType": "address","name": "to","type": "address"},
-            {"internalType": "uint256","name": "deadline","type": "uint256"},
+        "inputs":[
+            {"internalType":"uint256","name":"amountOutMin","type":"uint256"},
+            {"internalType":"address[]","name":"path","type":"address[]"},
+            {"internalType":"address","name":"to","type":"address"},
+            {"internalType":"uint256","name":"deadline","type":"uint256"},
         ],
-        "name": "swapExactETHForTokens",
+        "name":"swapExactETHForTokens",
         "outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],
-        "stateMutability":"payable","type":"function",
+        "stateMutability":"payable","type":"function"
     },
+    # swapExactTokensForETH
     {
-        "inputs": [
+        "inputs":[
             {"internalType":"uint256","name":"amountIn","type":"uint256"},
             {"internalType":"uint256","name":"amountOutMin","type":"uint256"},
             {"internalType":"address[]","name":"path","type":"address[]"},
@@ -71,8 +74,9 @@ UNISWAP_ROUTER_ABI = [
         ],
         "name":"swapExactTokensForETH",
         "outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],
-        "stateMutability":"nonpayable","type":"function",
+        "stateMutability":"nonpayable","type":"function"
     },
+    # getAmountsOut
     {
         "inputs":[
             {"internalType":"uint256","name":"amountIn","type":"uint256"},
@@ -80,16 +84,14 @@ UNISWAP_ROUTER_ABI = [
         ],
         "name":"getAmountsOut",
         "outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],
-        "stateMutability":"view","type":"function",
+        "stateMutability":"view","type":"function"
     },
 ]
 router = w3.eth.contract(address=UNISWAP_ROUTER_ADDRESS, abi=UNISWAP_ROUTER_ABI)
-
 ERC20_ABI = [
     {"constant":False,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"type":"function"},
     {"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"},
 ]
-
 WETH_ADDRESS = Web3.to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -107,15 +109,14 @@ last_processed_block = {w: 0 for w in WHALES}
 MONTHLY_BUDGET_EUR = Decimal("10")
 ETH_PRICE_USD      = Decimal("3500")
 EUR_USD_RATE       = Decimal("1.10")
-
 def eur_to_eth(eur: Decimal) -> Decimal:
     return ((eur * EUR_USD_RATE) / ETH_PRICE_USD).quantize(Decimal("0.000001"))
 
 monthly_budget_eth   = eur_to_eth(MONTHLY_BUDGET_EUR)
 MAX_TRADES_PER_MONTH = 5
 ETH_PER_TRADE        = (monthly_budget_eth / MAX_TRADES_PER_MONTH).quantize(Decimal("0.000001"))
-TP_THRESHOLD         = Decimal("0.30")
-SL_THRESHOLD         = Decimal("0.15")
+TP_THRESHOLD = Decimal("0.30")
+SL_THRESHOLD = Decimal("0.15")
 
 positions: list[dict] = []
 
@@ -134,150 +135,158 @@ async def safe_send(app, text: str):
 def fetch_etherscan_txns(whale: str, start_block: int) -> list[dict]:
     url = (
         "https://api.etherscan.io/api"
-        f"?module=account&action=txlist"
+        f"?module=account&action=tokentx"
         f"&address={whale}&startblock={start_block}&endblock=latest"
         f"&sort=asc&apikey={ETHERSCAN_API_KEY}"
     )
     res = send_http_request(url)
-    if res.get("status") == "1" and res.get("message") == "OK":
+    if res.get("status")=="1" and res.get("message")=="OK":
         return res["result"]
-    print(f"⚠️ Etherscan txlist error: {res.get('message')}")
     return []
 
-def is_buy(hex_in: str) -> bool:
-    return hex_in.startswith("0x7ff36ab5")
+def is_buy(inp: str) -> bool:
+    return inp.startswith("0x7ff36ab5")
 
-def is_sell(hex_in: str) -> bool:
-    return hex_in.startswith("0x18cbafe5")
+def is_sell(inp: str) -> bool:
+    return inp.startswith("0x18cbafe5")
 
-def extract_token_from_buy(hex_in: str) -> str:
-    base = 2 + (8+64+64) + 64 + 24
-    return Web3.to_checksum_address("0x" + hex_in[base:base+40])
+def extract_token_from_buy(inp: str) -> str:
+    start = 2 + 8+64+64 + 64 + 24
+    return Web3.to_checksum_address("0x" + inp[start:start+40])
 
-def extract_token_from_sell(hex_in: str) -> str:
-    base = 2 + (8+64+64+64) + 64 + 24
-    return Web3.to_checksum_address("0x" + hex_in[base:base+40])
+def extract_token_from_sell(inp: str) -> str:
+    start = 2 + 8+64+64+64 + 64 + 24
+    return Web3.to_checksum_address("0x" + inp[start:start+40])
 
-def buy_token(token_address: str, eth_amount: Decimal) -> None:
+def buy_token(token_address: str, eth_amount: Decimal):
     balance = w3.from_wei(w3.eth.get_balance(WALLET_ADDRESS), "ether")
     if balance < eth_amount:
         return
     amt_wei = w3.to_wei(eth_amount, "ether")
     path = [WETH_ADDRESS, token_address]
     try:
-        out = router.functions.getAmountsOut(amt_wei, path).call()
-        token_est_wei = out[1]
+        router.functions.getAmountsOut(amt_wei, path).call()
     except:
         return
     deadline = int(time.time()) + 300
     nonce = w3.eth.get_transaction_count(WALLET_ADDRESS)
-    txn = router.functions.swapExactETHForTokens(0, path, WALLET_ADDRESS, deadline).build_transaction({
+    tx = router.functions.swapExactETHForTokens(
+        0, path, WALLET_ADDRESS, deadline
+    ).build_transaction({
         "from": WALLET_ADDRESS,
         "value": amt_wei,
         "gas": 300_000,
         "gasPrice": w3.to_wei("30", "gwei"),
         "nonce": nonce,
     })
-    signed = w3.eth.account.sign_transaction(txn, PRIVATE_KEY)
+    signed = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
     w3.eth.send_raw_transaction(signed.raw_transaction)
+    positions.append({
+        "token": token_address,
+        "token_amount_wei": amt_wei,
+        "entry_eth": eth_amount,
+    })
 
-def sell_all_token(token_address: str) -> None:
+def sell_all_token(token_address: str):
     token = w3.eth.contract(address=token_address, abi=ERC20_ABI)
     bal = token.functions.balanceOf(WALLET_ADDRESS).call()
     if bal == 0:
         return
-    # approve
     nonce = w3.eth.get_transaction_count(WALLET_ADDRESS)
-    ap = token.functions.approve(UNISWAP_ROUTER_ADDRESS, bal).build_transaction({
-        "from": WALLET_ADDRESS, "gas":100_000,
-        "gasPrice":w3.to_wei("30","gwei"), "nonce":nonce,
+    approve_tx = token.functions.approve(UNISWAP_ROUTER_ADDRESS, bal).build_transaction({
+        "from": WALLET_ADDRESS,
+        "gas": 100_000,
+        "gasPrice": w3.to_wei("30", "gwei"),
+        "nonce": nonce,
     })
-    sap = w3.eth.account.sign_transaction(ap, PRIVATE_KEY)
-    w3.eth.send_raw_transaction(sap.raw_transaction)
+    signed_approve = w3.eth.account.sign_transaction(approve_tx, PRIVATE_KEY)
+    w3.eth.send_raw_transaction(signed_approve.raw_transaction)
     time.sleep(12)
-    # swap
     path = [token_address, WETH_ADDRESS]
     deadline = int(time.time()) + 300
     nonce2 = w3.eth.get_transaction_count(WALLET_ADDRESS)
-    stx = router.functions.swapExactTokensForETH(bal,0,path,WALLET_ADDRESS,deadline).build_transaction({
-        "from":WALLET_ADDRESS,"gas":300_000,
-        "gasPrice":w3.to_wei("30","gwei"),"nonce":nonce2,
+    sell_tx = router.functions.swapExactTokensForETH(
+        bal, 0, path, WALLET_ADDRESS, deadline
+    ).build_transaction({
+        "from": WALLET_ADDRESS,
+        "gas": 300_000,
+        "gasPrice": w3.to_wei("30", "gwei"),
+        "nonce": nonce2,
     })
-    sstx = w3.eth.account.sign_transaction(stx, PRIVATE_KEY)
-    w3.eth.send_raw_transaction(sstx.raw_transaction)
+    signed_sell = w3.eth.account.sign_transaction(sell_tx, PRIVATE_KEY)
+    w3.eth.send_raw_transaction(signed_sell.raw_transaction)
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 5) JOB : copytrade_task
+# 5) JOB RÉPÉTÉ : COPYTRADE + TP/SL
 # ───────────────────────────────────────────────────────────────────────────────
 async def copytrade_task(ctx: ContextTypes.DEFAULT_TYPE):
-    # TP/SL sur positions ouvertes
-    nouvelles = []
+    # TP/SL
+    new_pos = []
     for pos in positions:
         try:
-            out = router.functions.getAmountsOut(pos["token_amount_wei"], [pos["token"], WETH_ADDRESS]).call()
-            cur_eth = Decimal(out[1]) / Decimal(10**18)
-            ratio   = (cur_eth / pos["entry_eth"]).quantize(Decimal("0.0001"))
+            cur = router.functions.getAmountsOut(
+                pos["token_amount_wei"], [pos["token"], WETH_ADDRESS]
+            ).call()
+            cur_eth = Decimal(cur[1]) / Decimal(10**18)
         except:
-            nouvelles.append(pos)
+            new_pos.append(pos)
             continue
-
-        if ratio >= (Decimal("1.0") + TP_THRESHOLD):
-            await safe_send(ctx.application, f"✅ TAKE-PROFIT → {pos['token']} | {cur_eth:.6f} ETH (+{(ratio-1)*100:.1f}%)")
+        entry = pos["entry_eth"]
+        ratio = (cur_eth / entry).quantize(Decimal("0.0001"))
+        if ratio >= (Decimal("1.0")+TP_THRESHOLD):
+            await safe_send(ctx.application, f"✅ TAKE-PROFIT {pos['token']} → {cur_eth:.6f} ETH (+{(ratio-1)*100:.1f}%)")
             sell_all_token(pos["token"])
-        elif ratio <= (Decimal("1.0") - SL_THRESHOLD):
-            await safe_send(ctx.application, f"⚠️ STOP-LOSS → {pos['token']} | {cur_eth:.6f} ETH (−{(1-ratio)*100:.1f}%)")
+        elif ratio <= (Decimal("1.0")-SL_THRESHOLD):
+            await safe_send(ctx.application, f"⚠ STOP-LOSS {pos['token']} → {cur_eth:.6f} ETH (−{(1-ratio)*100:.1f}%)")
             sell_all_token(pos["token"])
         else:
-            nouvelles.append(pos)
-    positions[:] = nouvelles
+            new_pos.append(pos)
+    positions[:] = new_pos
 
-    # Copy-trade sur chaque whale
+    # Copy trades
     for whale in WHALES:
         txs = fetch_etherscan_txns(whale, last_processed_block[whale])
         for tx in txs:
-            blk = int(tx.get("blockNumber",0))
-            inp = tx.get("input","")
-            to_ = Web3.to_checksum_address(tx.get("to","0x0"))
-
-            if to_.lower() != UNISWAP_ROUTER_ADDRESS.lower():
+            blk   = int(tx.get("blockNumber",0))
+            to    = tx.get("to","").lower()
+            inp   = tx.get("input","")
+            if to != UNISWAP_ROUTER_ADDRESS.lower():
                 continue
-
             if is_buy(inp):
                 token = extract_token_from_buy(inp)
-                await safe_send(ctx.application, f"👀 Whale {whale[:8]} → BUY détecté ({token})")
+                await safe_send(ctx.application, f"👀 Whale {whale[:8]} BUY → {token}")
                 buy_token(token, ETH_PER_TRADE)
             elif is_sell(inp):
                 token = extract_token_from_sell(inp)
-                await safe_send(ctx.application, f"👀 Whale {whale[:8]} → SELL détecté ({token})")
+                await safe_send(ctx.application, f"👀 Whale {whale[:8]} SELL → {token}")
                 sell_all_token(token)
-
             last_processed_block[whale] = blk
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 6) JOB : résumé quotidien à 18h UTC
+# 6) SUMMARY QUOTIDIEN À 18h UTC
 # ───────────────────────────────────────────────────────────────────────────────
 async def daily_summary(ctx: ContextTypes.DEFAULT_TYPE):
     now = datetime.utcnow()
     invested = sum(pos["entry_eth"] for pos in positions)
-    txt = (
+    msg = (
         f"🧾 Résumé {now:%Y-%m-%d}:\n"
         f"• Positions ouvertes : {len(positions)}\n"
         f"• Investi total      : {invested:.6f} ETH"
     )
-    await safe_send(ctx.application, txt)
+    await safe_send(ctx.application, msg)
 
 # ───────────────────────────────────────────────────────────────────────────────
 # 7) HANDLERS TELEGRAM
 # ───────────────────────────────────────────────────────────────────────────────
 async def start_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot copytrade whales en ligne. Tapez /status")
+    await update.message.reply_text("🤖 Bot copytrade en ligne. Tapez /status")
 
 async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     invested = sum(pos["entry_eth"] for pos in positions)
     msg = (
         f"📊 Statut actuel :\n"
         f"• Positions ouvertes : {len(positions)}\n"
-        f"• Investi total      : {invested:.6f} ETH\n"
+        f"• Investi total      : {invested:.6f} ETH"
     )
     await update.message.reply_text(msg)
 
@@ -286,8 +295,10 @@ async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ───────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start_handler))
+    app.add_handler(CommandHandler("start",  start_handler))
     app.add_handler(CommandHandler("status", status_handler))
+
     app.job_queue.run_repeating(copytrade_task, interval=30, first=5)
     app.job_queue.run_daily(daily_summary, time=dt_time(hour=18, minute=0))
+
     app.run_polling(drop_pending_updates=True)
