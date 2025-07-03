@@ -157,7 +157,7 @@ def is_buy(inp: str) -> bool:
 def is_sell(inp: str) -> bool:
     return inp.startswith("0x18cbafe5")
 
-def extract_path_token(input_data: str) -> str | None:
+def extract_path_token(input_data: str) -> str|None:
     try:
         _, params = router.decode_function_input(input_data)
         return params["path"][1]
@@ -241,10 +241,14 @@ async def copytrade_task(ctx: ContextTypes.DEFAULT_TYPE):
         entry = pos["entry_eth"]
         ratio = (cur_eth / entry).quantize(Decimal("0.0001"))
         if ratio >= 1 + TP_THRESHOLD:
-            await safe_send(ctx.application, f"✅ TP {pos['token']} → {cur_eth:.6f} ETH (+{(ratio-1)*100:.1f}%)")
+            await safe_send(ctx.application,
+                f"✅ TP {pos['token']} → {cur_eth:.6f} ETH (+{(ratio-1)*100:.1f}%)"
+            )
             sell_all_token(pos["token"])
         elif ratio <= 1 - SL_THRESHOLD:
-            await safe_send(ctx.application, f"⚠ SL {pos['token']} → {cur_eth:.6f} ETH (−{(1-ratio)*100:.1f}%)")
+            await safe_send(ctx.application,
+                f"⚠ SL {pos['token']} → {cur_eth:.6f} ETH (−{(1-ratio)*100:.1f}%)"
+            )
             sell_all_token(pos["token"])
         else:
             new_positions.append(pos)
@@ -265,17 +269,21 @@ async def copytrade_task(ctx: ContextTypes.DEFAULT_TYPE):
                 continue
 
             if is_buy(tx["input"]):
-                await safe_send(ctx.application, f"👀 Whale {whale[:8]} BUY → {token}")
+                await safe_send(ctx.application,
+                    f"👀 Whale {whale[:8]} BUY → {token}"
+                )
                 buy_token(token, ETH_PER_TRADE)
             elif is_sell(tx["input"]):
-                await safe_send(ctx.application, f"👀 Whale {whale[:8]} SELL → {token}")
+                await safe_send(ctx.application,
+                    f"👀 Whale {whale[:8]} SELL → {token}"
+                )
                 sell_all_token(token)
 
 # ───────────────────────────────────────────────────────────────────────────────
 # 6) DAILY SUMMARY 18h UTC
 # ───────────────────────────────────────────────────────────────────────────────
 async def daily_summary(ctx: ContextTypes.DEFAULT_TYPE):
-    now = datetime.utcnow()
+    now   = datetime.utcnow()
     total = sum(pos["entry_eth"] for pos in positions)
     txt = f"🧾 {now:%Y-%m-%d} → open:{len(positions)} invest:{total:.6f} ETH"
     await safe_send(ctx.application, txt)
@@ -294,14 +302,15 @@ async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # 8) LANCEMENT
 # ───────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # 0) Supprime le webhook existant
-    resp = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook")
-    if resp.ok:
-        print("✅ Webhook supprimé", flush=True)
-    else:
-        print("⚠️ Échec suppression webhook", resp.text, flush=True)
+    # 0) supprime tout webhook et vide les anciennes updates
+    #    grâce à drop_pending_updates=True
+    print("🗑 Suppression du webhook…", flush=True)
+    # utilisation de la méthode Bot.delete_webhook intégrée
+    app_temp = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app_temp.bot.delete_webhook(drop_pending_updates=True)
+    print("✅ Webhook effacé et updates pendants vidés", flush=True)
 
-    # 1) Démarrage
+    # 1) Démarrage du bot
     print("▶️ Démarrage du bot…", flush=True)
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start",  start_handler))
@@ -310,5 +319,5 @@ if __name__ == "__main__":
     app.job_queue.run_repeating(copytrade_task, interval=30, first=5)
     app.job_queue.run_daily(daily_summary, time=dt_time(hour=18, minute=0))
 
-    # Lancer avec `python -u main.py` pour unbuffered
+    # Lancer en unbuffered : `python -u main.py`
     app.run_polling(drop_pending_updates=True)
