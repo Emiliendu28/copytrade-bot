@@ -37,13 +37,11 @@ for name, val in [
     if not val:
         raise RuntimeError(f"❌ {name} non défini !")
 
-# checksum wallet
 try:
     WALLET_ADDRESS = Web3.to_checksum_address(RAW_WALLET)
 except Exception as e:
     raise RuntimeError(f"❌ WALLET_ADDRESS invalide : {e}")
 
-# Web3 / Infura
 w3 = Web3(Web3.HTTPProvider(INFURA_URL))
 if not w3.is_connected():
     raise ConnectionError("❌ Échec connexion Infura")
@@ -52,9 +50,11 @@ print("✅ Variables chargées", flush=True)
 print("✅ Web3 connecté"    , flush=True)
 
 # ───────────────────────────────────────────────────────────────────────────────
-# 2) Uniswap V2 Router
+# 2) UNISWAP ROUTER & ERC20
 # ───────────────────────────────────────────────────────────────────────────────
-UNISWAP_ROUTER_ADDRESS = Web3.to_checksum_address("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D")
+UNISWAP_ROUTER_ADDRESS = Web3.to_checksum_address(
+    "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"
+)
 UNISWAP_ROUTER_ABI = [
     # swapExactETHForTokens
     {
@@ -89,13 +89,17 @@ UNISWAP_ROUTER_ABI = [
         "stateMutability":"view","type":"function"
     },
 ]
-router = w3.eth.contract(address=UNISWAP_ROUTER_ADDRESS, abi=UNISWAP_ROUTER_ABI)
+router = w3.eth.contract(
+    address=UNISWAP_ROUTER_ADDRESS, abi=UNISWAP_ROUTER_ABI
+)
 
 ERC20_ABI = [
     {"constant":False,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"type":"function"},
-    {"constant":True, "inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"},
+    {"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"},
 ]
-WETH_ADDRESS = Web3.to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+WETH_ADDRESS = Web3.to_checksum_address(
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+)
 
 # ───────────────────────────────────────────────────────────────────────────────
 # 3) COPY-TRADING & BUDGET
@@ -121,7 +125,6 @@ MAX_TRADES_PER_MONTH = 5
 ETH_PER_TRADE        = (monthly_budget_eth / MAX_TRADES_PER_MONTH).quantize(Decimal("0.000001"))
 TP_THRESHOLD = Decimal("0.30")
 SL_THRESHOLD = Decimal("0.15")
-
 positions: list[dict] = []
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -155,9 +158,6 @@ def is_sell(inp: str) -> bool:
     return inp.startswith("0x18cbafe5")
 
 def extract_path_token(input_data: str) -> str | None:
-    """
-    Décode l'input de la tx Uniswap et retourne le token à l'index 1 du path.
-    """
     try:
         _, params = router.decode_function_input(input_data)
         return params["path"][1]
@@ -226,13 +226,12 @@ def sell_all_token(token_address: str):
 # 5) JOB COPYTRADE + TP/SL
 # ───────────────────────────────────────────────────────────────────────────────
 async def copytrade_task(ctx: ContextTypes.DEFAULT_TYPE):
-    # 1) Take Profit / Stop Loss
+    # TP/SL
     new_positions = []
     for pos in positions:
         try:
             out = router.functions.getAmountsOut(
-                pos["token_amount_wei"],
-                [pos["token"], WETH_ADDRESS]
+                pos["token_amount_wei"], [pos["token"], WETH_ADDRESS]
             ).call()
             cur_eth = Decimal(out[1]) / Decimal(10**18)
         except:
@@ -251,12 +250,11 @@ async def copytrade_task(ctx: ContextTypes.DEFAULT_TYPE):
             new_positions.append(pos)
     positions[:] = new_positions
 
-    # 2) Copy whale trades
+    # Copy whale trades
     for whale in WHALES:
         txs = fetch_etherscan_txns(whale, last_processed_block[whale])
         for tx in txs:
             blk = int(tx["blockNumber"])
-            # on marque le dernier block traité avant tout
             last_processed_block[whale] = blk
 
             if tx["to"].lower() != UNISWAP_ROUTER_ADDRESS.lower():
@@ -290,13 +288,20 @@ async def start_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     total = sum(pos["entry_eth"] for pos in positions)
-    msg = f"📊 Open:{len(positions)}  Invest:{total:.6f} ETH"
-    await update.message.reply_text(msg)
+    await update.message.reply_text(f"📊 Open:{len(positions)} Invest:{total:.6f} ETH")
 
 # ───────────────────────────────────────────────────────────────────────────────
 # 8) LANCEMENT
 # ───────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # 0) Supprime le webhook existant
+    resp = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook")
+    if resp.ok:
+        print("✅ Webhook supprimé", flush=True)
+    else:
+        print("⚠️ Échec suppression webhook", resp.text, flush=True)
+
+    # 1) Démarrage
     print("▶️ Démarrage du bot…", flush=True)
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start",  start_handler))
@@ -305,4 +310,5 @@ if __name__ == "__main__":
     app.job_queue.run_repeating(copytrade_task, interval=30, first=5)
     app.job_queue.run_daily(daily_summary, time=dt_time(hour=18, minute=0))
 
+    # Lancer avec `python -u main.py` pour unbuffered
     app.run_polling(drop_pending_updates=True)
